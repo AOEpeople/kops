@@ -57,6 +57,7 @@ type CreateClusterOptions struct {
 	SSHPublicKey         string
 	VPCID                string
 	NetworkCIDR          string
+	PublicSubnetIds      []string
 	DNSZone              string
 	AdminAccess          []string
 	Networking           string
@@ -145,6 +146,7 @@ func NewCmdCreateCluster(f *util.Factory, out io.Writer) *cobra.Command {
 
 	cmd.Flags().StringVar(&options.VPCID, "vpc", options.VPCID, "Set to use a shared VPC")
 	cmd.Flags().StringVar(&options.NetworkCIDR, "network-cidr", options.NetworkCIDR, "Set to override the default network CIDR")
+	cmd.Flags().StringSliceVar(&options.PublicSubnetIds, "public-subnet-ids", options.PublicSubnetIds, "bla bla bla")
 
 	cmd.Flags().Int32Var(&options.MasterCount, "master-count", options.MasterCount, "Set the number of masters.  Defaults to one master per master-zone")
 	cmd.Flags().Int32Var(&options.NodeCount, "node-count", options.NodeCount, "Set the number of nodes")
@@ -269,21 +271,41 @@ func RunCreateCluster(f *util.Factory, out io.Writer, c *CreateClusterOptions) e
 
 	glog.V(4).Infof("networking mode=%s => %s", c.Networking, fi.DebugAsJsonString(cluster.Spec.Networking))
 
-	if len(c.Zones) != 0 {
+	if len(c.PublicSubnetIds) != 0 {
 		existingSubnets := make(map[string]*api.ClusterSubnetSpec)
 		for i := range cluster.Spec.Subnets {
 			subnet := &cluster.Spec.Subnets[i]
 			existingSubnets[subnet.Name] = subnet
 		}
-		for _, zoneName := range c.Zones {
-			// We create default subnets named the same as the zones
-			subnetName := zoneName
+		for zoneIndex, subnetId := range c.PublicSubnetIds {
+			zone := c.Zones[zoneIndex]
+			subnetName := zone
 			if existingSubnets[subnetName] == nil {
 				cluster.Spec.Subnets = append(cluster.Spec.Subnets, api.ClusterSubnetSpec{
 					Name:   subnetName,
 					Zone:   subnetName,
 					Egress: c.Egress,
+					ProviderID: subnetId,
 				})
+			}
+		}
+	} else {
+		if len(c.Zones) != 0 {
+			existingSubnets := make(map[string]*api.ClusterSubnetSpec)
+			for i := range cluster.Spec.Subnets {
+				subnet := &cluster.Spec.Subnets[i]
+				existingSubnets[subnet.Name] = subnet
+			}
+			for _, zoneName := range c.Zones {
+				// We create default subnets named the same as the zones
+				subnetName := zoneName
+				if existingSubnets[subnetName] == nil {
+					cluster.Spec.Subnets = append(cluster.Spec.Subnets, api.ClusterSubnetSpec{
+						Name:   subnetName,
+						Zone:   subnetName,
+						Egress: c.Egress,
+					})
+				}
 			}
 		}
 	}
