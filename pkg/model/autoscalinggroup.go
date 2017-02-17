@@ -220,7 +220,7 @@ func (b *AutoscalingGroupModelBuilder) resourceNodeUp(ig *kops.InstanceGroup) (*
 			if err == nil {
 				return string(contents[:])
 			}
-			return nil
+			return ""
 		},
 	}
 
