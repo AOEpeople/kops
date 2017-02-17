@@ -25,6 +25,8 @@ import (
 	"k8s.io/kops/upup/pkg/fi/cloudup/awstasks"
 	"k8s.io/kops/upup/pkg/fi/nodeup"
 	"text/template"
+	"os"
+	"io/ioutil"
 )
 
 const (
@@ -211,6 +213,14 @@ func (b *AutoscalingGroupModelBuilder) resourceNodeUp(ig *kops.InstanceGroup) (*
 			}
 
 			return string(data), nil
+		},
+		"NodeUserdataAddition": func() string {
+			addition := os.Getenv("NODE_USERDATA_ADDITION")
+			contents, err := ioutil.ReadFile(addition)
+			if err == nil {
+				return string(contents[:])
+			}
+			return nil
 		},
 	}
 

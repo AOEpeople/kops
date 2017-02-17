@@ -143,4 +143,12 @@ __EOF_KUBE_ENV
 
 download-release
 echo "== nodeup node config done =="
+
+############################# CUSTOM USERDATA ######################################
+
+echo "== custom userdata starting =="
+{{ NodeUserdataAddition }}
+echo "== custom userdata done =="
+
+####################################################################################
 `
