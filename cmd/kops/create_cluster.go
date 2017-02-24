@@ -552,21 +552,21 @@ func RunCreateCluster(f *util.Factory, out io.Writer, c *CreateClusterOptions) e
 			cluster.Spec.Subnets[i].Type = api.SubnetTypePrivate
 		}
 
-		var utilitySubnets []api.ClusterSubnetSpec
-		for _, s := range cluster.Spec.Subnets {
-			if s.Type == api.SubnetTypeUtility {
-				continue
-			}
-			subnet := api.ClusterSubnetSpec{
-				Name: "utility-" + s.Name,
-				Zone: s.Zone,
-				Type: api.SubnetTypeUtility,
-			}
-			utilitySubnets = append(utilitySubnets, subnet)
-		}
-		cluster.Spec.Subnets = append(cluster.Spec.Subnets, utilitySubnets...)
-
 		if c.Bastion {
+			var utilitySubnets []api.ClusterSubnetSpec
+			for _, s := range cluster.Spec.Subnets {
+				if s.Type == api.SubnetTypeUtility {
+					continue
+				}
+				subnet := api.ClusterSubnetSpec{
+					Name: "utility-" + s.Name,
+					Zone: s.Zone,
+					Type: api.SubnetTypeUtility,
+				}
+				utilitySubnets = append(utilitySubnets, subnet)
+			}
+			cluster.Spec.Subnets = append(cluster.Spec.Subnets, utilitySubnets...)
+
 			bastionGroup := &api.InstanceGroup{}
 			bastionGroup.Spec.Role = api.InstanceGroupRoleBastion
 			bastionGroup.ObjectMeta.Name = "bastions"
