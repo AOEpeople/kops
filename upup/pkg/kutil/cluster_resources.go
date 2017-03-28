@@ -17,11 +17,12 @@ limitations under the License.
 package kutil
 
 import (
+	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
-	"k8s.io/kubernetes/pkg/util/sets"
 	"strings"
 )
 
@@ -45,9 +46,21 @@ type ClusterResources interface {
 type AwsCluster struct {
 	ClusterName string
 	Cloud       fi.Cloud
+	Region      string
 }
 
 func (c *AwsCluster) ListResources() (map[string]*ResourceTracker, error) {
+	switch c.Cloud.ProviderID() {
+	case fi.CloudProviderAWS:
+		return c.listResourcesAWS()
+	case fi.CloudProviderGCE:
+		return c.listResourcesGCE()
+	default:
+		return nil, fmt.Errorf("Delete on clusters on %q not (yet) supported", c.Cloud.ProviderID())
+	}
+}
+
+func (c *AwsCluster) listResourcesAWS() (map[string]*ResourceTracker, error) {
 	cloud := c.Cloud.(awsup.AWSCloud)
 
 	resources := make(map[string]*ResourceTracker)
@@ -55,6 +68,10 @@ func (c *AwsCluster) ListResources() (map[string]*ResourceTracker, error) {
 	// These are the functions that are used for looking up
 	// cluster resources by their tags.
 	listFunctions := []listFn{
+
+		// CloudFormation
+		//ListCloudFormationStacks,
+
 		// EC2
 		ListInstances,
 		ListKeypairs,

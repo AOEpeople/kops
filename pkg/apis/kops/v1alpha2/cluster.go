@@ -17,20 +17,19 @@ limitations under the License.
 package v1alpha2
 
 import (
-	"k8s.io/kubernetes/pkg/api/v1"
-	meta_v1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type Cluster struct {
-	meta_v1.TypeMeta `json:",inline"`
-	ObjectMeta       v1.ObjectMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta `json:",inline"`
+	ObjectMeta      metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec ClusterSpec `json:"spec,omitempty"`
 }
 
 type ClusterList struct {
-	meta_v1.TypeMeta `json:",inline"`
-	meta_v1.ListMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
 
 	Items []Cluster `json:"items"`
 }
@@ -149,12 +148,16 @@ type ClusterSpec struct {
 	KubeProxy             *KubeProxyConfig             `json:"kubeProxy,omitempty"`
 	Kubelet               *KubeletConfigSpec           `json:"kubelet,omitempty"`
 	MasterKubelet         *KubeletConfigSpec           `json:"masterKubelet,omitempty"`
+	CloudConfig           *CloudConfiguration          `json:"cloudConfig,omitempty"`
 
 	// Networking configuration
 	Networking *NetworkingSpec `json:"networking,omitempty"`
 
 	// API field controls how the API is exposed outside the cluster
 	API *AccessSpec `json:"api,omitempty"`
+
+	// Tags for AWS resources
+	CloudLabels map[string]string `json:"cloudLabels,omitempty"`
 }
 
 type AccessSpec struct {
@@ -178,7 +181,8 @@ const (
 )
 
 type LoadBalancerAccessSpec struct {
-	Type LoadBalancerType `json:"type,omitempty"`
+	Type               LoadBalancerType `json:"type,omitempty"`
+	IdleTimeoutSeconds *int64           `json:"idleTimeoutSeconds,omitempty"`
 }
 
 type KubeDNSConfig struct {

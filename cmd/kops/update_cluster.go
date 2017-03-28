@@ -21,11 +21,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/golang/glog"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kops/cmd/kops/util"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/registry"
@@ -33,7 +35,6 @@ import (
 	"k8s.io/kops/upup/pkg/fi/cloudup"
 	"k8s.io/kops/upup/pkg/fi/utils"
 	"k8s.io/kops/upup/pkg/kutil"
-	k8sapi "k8s.io/kubernetes/pkg/api"
 )
 
 type UpdateClusterOptions struct {
@@ -107,6 +108,8 @@ func RunUpdateCluster(f *util.Factory, clusterName string, out io.Writer, c *Upd
 	if c.OutDir == "" {
 		if c.Target == cloudup.TargetTerraform {
 			c.OutDir = "out/terraform"
+		} else if c.Target == cloudup.TargetCloudformation {
+			c.OutDir = "out/cloudformation"
 		} else {
 			c.OutDir = "out"
 		}
@@ -150,7 +153,7 @@ func RunUpdateCluster(f *util.Factory, clusterName string, out io.Writer, c *Upd
 
 	var instanceGroups []*kops.InstanceGroup
 	{
-		list, err := clientset.InstanceGroups(cluster.ObjectMeta.Name).List(k8sapi.ListOptions{})
+		list, err := clientset.InstanceGroups(cluster.ObjectMeta.Name).List(metav1.ListOptions{})
 		if err != nil {
 			return err
 		}
@@ -231,6 +234,17 @@ func RunUpdateCluster(f *util.Factory, clusterName string, out io.Writer, c *Upd
 				fmt.Fprintf(sb, "   cd %s\n", c.OutDir)
 				fmt.Fprintf(sb, "   terraform plan\n")
 				fmt.Fprintf(sb, "   terraform apply\n")
+				fmt.Fprintf(sb, "\n")
+			}
+		} else if c.Target == cloudup.TargetCloudformation {
+			fmt.Fprintf(sb, "\n")
+			fmt.Fprintf(sb, "Cloudformation output has been placed into %s\n", c.OutDir)
+
+			if firstRun {
+				cfName := "kubernetes-" + strings.Replace(clusterName, ".", "-", -1)
+				cfPath := filepath.Join(c.OutDir, "kubernetes.json")
+				fmt.Fprintf(sb, "Run this command to apply the configuration:\n")
+				fmt.Fprintf(sb, "   aws cloudformation create-stack --capabilities CAPABILITY_NAMED_IAM --stack-name %s --template-body file://%s\n", cfName, cfPath)
 				fmt.Fprintf(sb, "\n")
 			}
 		} else if firstRun {

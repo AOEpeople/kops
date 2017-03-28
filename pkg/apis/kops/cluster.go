@@ -19,20 +19,19 @@ package kops
 import (
 	"fmt"
 
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type Cluster struct {
-	v1.TypeMeta `json:",inline"`
-	ObjectMeta  api.ObjectMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta `json:",inline"`
+	ObjectMeta      metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec ClusterSpec `json:"spec,omitempty"`
 }
 
 type ClusterList struct {
-	v1.TypeMeta `json:",inline"`
-	v1.ListMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
 
 	Items []Cluster `json:"items"`
 }
@@ -214,8 +213,6 @@ type ClusterSpec struct {
 	//KubeProxyTestArgs             string `json:",omitempty"`
 	//KubeProxyTestLogLevel         string `json:",omitempty"`
 
-	//NodeUp                        *NodeUpConfig `json:",omitempty"`
-
 	//// Masters is the configuration for each master in the cluster
 	//Masters []*MasterConfig `json:",omitempty"`
 
@@ -231,12 +228,16 @@ type ClusterSpec struct {
 	KubeProxy             *KubeProxyConfig             `json:"kubeProxy,omitempty"`
 	Kubelet               *KubeletConfigSpec           `json:"kubelet,omitempty"`
 	MasterKubelet         *KubeletConfigSpec           `json:"masterKubelet,omitempty"`
+	CloudConfig           *CloudConfiguration          `json:"cloudConfig,omitempty"`
 
 	// Networking configuration
 	Networking *NetworkingSpec `json:"networking,omitempty"`
 
 	// API field controls how the API is exposed outside the cluster
 	API *AccessSpec `json:"api,omitempty"`
+
+	// Tags for AWS instance groups
+	CloudLabels map[string]string `json:"cloudLabels,omitempty"`
 }
 
 type AccessSpec struct {
@@ -260,7 +261,8 @@ const (
 )
 
 type LoadBalancerAccessSpec struct {
-	Type LoadBalancerType `json:"type,omitempty"`
+	Type               LoadBalancerType `json:"type,omitempty"`
+	IdleTimeoutSeconds *int64           `json:"idleTimeoutSeconds,omitempty"`
 }
 
 type KubeDNSConfig struct {
@@ -271,16 +273,6 @@ type KubeDNSConfig struct {
 	Domain   string `json:"domain,omitempty"`
 	ServerIP string `json:"serverIP,omitempty"`
 }
-
-//
-//type MasterConfig struct {
-//	Name string `json:",omitempty"`
-//
-//	Image       string `json:",omitempty"`
-//	Zone        string `json:",omitempty"`
-//	MachineType string `json:",omitempty"`
-//}
-//
 
 type EtcdClusterSpec struct {
 	// Name is the name of the etcd cluster (main, events etc)
@@ -324,16 +316,6 @@ type ClusterSubnetSpec struct {
 
 	Type SubnetType `json:"type,omitempty"`
 }
-
-//type NodeUpConfig struct {
-//	Source     string `json:",omitempty"`
-//	SourceHash string `json:",omitempty"`
-//
-//	Tags       []string `json:",omitempty"`
-//
-//	// Assets that NodeUp should use.  This is a "search-path" for resolving dependencies.
-//	Assets     []string `json:",omitempty"`
-//}
 
 // FillDefaults populates default values.
 // This is different from PerformAssignments, because these values are changeable, and thus we don't need to

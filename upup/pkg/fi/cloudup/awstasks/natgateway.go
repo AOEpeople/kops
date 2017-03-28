@@ -24,6 +24,7 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
+	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
 )
 
@@ -219,11 +220,13 @@ func findNatGatewayFromRouteTable(cloud awsup.AWSCloud, routeTable *RouteTable) 
 func (s *NatGateway) CheckChanges(a, e, changes *NatGateway) error {
 	// New
 	if a == nil {
-		if e.ElasticIP == nil {
-			return fi.RequiredField("ElasticIp")
-		}
-		if e.Subnet == nil {
-			return fi.RequiredField("Subnet")
+		if !fi.BoolValue(e.Shared) {
+			if e.ElasticIP == nil {
+				return fi.RequiredField("ElasticIp")
+			}
+			if e.Subnet == nil {
+				return fi.RequiredField("Subnet")
+			}
 		}
 		if e.AssociatedRouteTable == nil {
 			return fi.RequiredField("AssociatedRouteTable")
@@ -277,6 +280,11 @@ func (_ *NatGateway) RenderAWS(t *awsup.AWSAPITarget, a, e, changes *NatGateway)
 
 	var id *string
 	if a == nil {
+
+		if fi.BoolValue(e.Shared) {
+			return fmt.Errorf("NAT gateway %q not found", fi.StringValue(e.ID))
+		}
+
 		glog.V(2).Infof("Creating Nat Gateway")
 
 		request := &ec2.CreateNatGatewayInput{}
@@ -329,6 +337,15 @@ type terraformNATGateway struct {
 }
 
 func (_ *NatGateway) RenderTerraform(t *terraform.TerraformTarget, a, e, changes *NatGateway) error {
+	if fi.BoolValue(e.Shared) {
+		if e.ID == nil {
+			return fmt.Errorf("ID must be set, if NatGateway is shared: %s", e)
+		}
+
+		glog.V(4).Infof("reusing existing NatGateway with id %q", *e.ID)
+		return nil
+	}
+
 	tf := &terraformNATGateway{
 		AllocationID: e.ElasticIP.TerraformLink(),
 		SubnetID:     e.Subnet.TerraformLink(),
@@ -338,5 +355,48 @@ func (_ *NatGateway) RenderTerraform(t *terraform.TerraformTarget, a, e, changes
 }
 
 func (e *NatGateway) TerraformLink() *terraform.Literal {
+	if fi.BoolValue(e.Shared) {
+		if e.ID == nil {
+			glog.Fatalf("ID must be set, if NatGateway is shared: %s", e)
+		}
+
+		return terraform.LiteralFromStringValue(*e.ID)
+	}
+
 	return terraform.LiteralProperty("aws_nat_gateway", *e.Name, "id")
+}
+
+type cloudformationNATGateway struct {
+	AllocationID *cloudformation.Literal `json:"AllocationId,omitempty"`
+	SubnetID     *cloudformation.Literal `json:"SubnetId,omitempty"`
+}
+
+func (_ *NatGateway) RenderCloudformation(t *cloudformation.CloudformationTarget, a, e, changes *NatGateway) error {
+	if fi.BoolValue(e.Shared) {
+		if e.ID == nil {
+			return fmt.Errorf("ID must be set, if NatGateway is shared: %s", e)
+		}
+
+		glog.V(4).Infof("reusing existing NatGateway with id %q", *e.ID)
+		return nil
+	}
+
+	tf := &cloudformationNATGateway{
+		AllocationID: e.ElasticIP.CloudformationAllocationID(),
+		SubnetID:     e.Subnet.CloudformationLink(),
+	}
+
+	return t.RenderResource("AWS::EC2::NatGateway", *e.Name, tf)
+}
+
+func (e *NatGateway) CloudformationLink() *cloudformation.Literal {
+	if fi.BoolValue(e.Shared) {
+		if e.ID == nil {
+			glog.Fatalf("ID must be set, if NatGateway is shared: %s", e)
+		}
+
+		return cloudformation.LiteralString(*e.ID)
+	}
+
+	return cloudformation.Ref("AWS::EC2::NatGateway", *e.Name)
 }

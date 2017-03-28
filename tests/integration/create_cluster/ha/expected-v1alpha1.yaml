@@ -1,7 +1,7 @@
 apiVersion: kops/v1alpha1
 kind: Cluster
 metadata:
-  creationTimestamp: "2017-01-01T00:00:00Z"
+  creationTimestamp: 2017-01-01T00:00:00Z
   name: ha.example.com
 spec:
   adminAccess:
@@ -28,7 +28,7 @@ spec:
     - name: c
       zone: us-test-1c
     name: events
-  kubernetesVersion: v1.4.8
+  kubernetesVersion: v1.6.0-alpha.3
   masterPublicName: api.ha.example.com
   networkCIDR: 172.20.0.0/16
   networking:
@@ -52,12 +52,12 @@ spec:
 apiVersion: kops/v1alpha1
 kind: InstanceGroup
 metadata:
-  creationTimestamp: "2017-01-01T00:00:00Z"
+  creationTimestamp: 2017-01-01T00:00:00Z
   labels:
     kops.k8s.io/cluster: ha.example.com
   name: master-us-test-1a
 spec:
-  image: kope.io/k8s-1.4-debian-jessie-amd64-hvm-ebs-2016-10-21
+  image: kope.io/k8s-1.5-debian-jessie-amd64-hvm-ebs-2017-01-09
   machineType: m3.medium
   maxSize: 1
   minSize: 1
@@ -70,12 +70,12 @@ spec:
 apiVersion: kops/v1alpha1
 kind: InstanceGroup
 metadata:
-  creationTimestamp: "2017-01-01T00:00:00Z"
+  creationTimestamp: 2017-01-01T00:00:00Z
   labels:
     kops.k8s.io/cluster: ha.example.com
   name: master-us-test-1b
 spec:
-  image: kope.io/k8s-1.4-debian-jessie-amd64-hvm-ebs-2016-10-21
+  image: kope.io/k8s-1.5-debian-jessie-amd64-hvm-ebs-2017-01-09
   machineType: m3.medium
   maxSize: 1
   minSize: 1
@@ -88,12 +88,12 @@ spec:
 apiVersion: kops/v1alpha1
 kind: InstanceGroup
 metadata:
-  creationTimestamp: "2017-01-01T00:00:00Z"
+  creationTimestamp: 2017-01-01T00:00:00Z
   labels:
     kops.k8s.io/cluster: ha.example.com
   name: master-us-test-1c
 spec:
-  image: kope.io/k8s-1.4-debian-jessie-amd64-hvm-ebs-2016-10-21
+  image: kope.io/k8s-1.5-debian-jessie-amd64-hvm-ebs-2017-01-09
   machineType: m3.medium
   maxSize: 1
   minSize: 1
@@ -106,12 +106,12 @@ spec:
 apiVersion: kops/v1alpha1
 kind: InstanceGroup
 metadata:
-  creationTimestamp: "2017-01-01T00:00:00Z"
+  creationTimestamp: 2017-01-01T00:00:00Z
   labels:
     kops.k8s.io/cluster: ha.example.com
   name: nodes
 spec:
-  image: kope.io/k8s-1.4-debian-jessie-amd64-hvm-ebs-2016-10-21
+  image: kope.io/k8s-1.5-debian-jessie-amd64-hvm-ebs-2017-01-09
   machineType: t2.medium
   maxSize: 2
   minSize: 2

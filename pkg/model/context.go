@@ -17,17 +17,28 @@ limitations under the License.
 package model
 
 import (
+	"encoding/base32"
 	"fmt"
+	"hash/fnv"
+	"net"
+	"strings"
+
 	"github.com/blang/semver"
 	"github.com/golang/glog"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/util"
-	"strings"
+	"k8s.io/kops/pkg/featureflag"
+	"k8s.io/kops/pkg/model/components"
+	"k8s.io/kops/upup/pkg/fi/cloudup/awstasks"
 )
 
+var UseLegacyELBName = featureflag.New("UseLegacyELBName", featureflag.Bool(false))
+
 type KopsModelContext struct {
+	Cluster *kops.Cluster
+
 	Region         string
-	Cluster        *kops.Cluster
+	HostedZoneID   string // used to set up route53 IAM policy
 	InstanceGroups []*kops.InstanceGroup
 
 	SSHPublicKeys [][]byte
@@ -35,23 +46,46 @@ type KopsModelContext struct {
 
 // Will attempt to calculate a meaningful name for an ELB given a prefix
 // Will never return a string longer than 32 chars
-func (m *KopsModelContext) GetELBName32(prefix string) (string, error) {
-	var returnString string
+// Note this is _not_ the primary identifier for the ELB - we use the Name tag for that.
+func (m *KopsModelContext) GetELBName32(prefix string) string {
 	c := m.Cluster.ObjectMeta.Name
-	s := strings.Split(c, ".")
 
-	// TODO: We used to have this...
-	//master-{{ replace .ClusterName "." "-" }}
-	// TODO: strings.Split cannot return empty
-	if len(s) > 0 {
-		returnString = fmt.Sprintf("%s-%s", prefix, s[0])
-	} else {
-		returnString = fmt.Sprintf("%s-%s", prefix, c)
+	if UseLegacyELBName.Enabled() {
+		tokens := strings.Split(c, ".")
+		s := fmt.Sprintf("%s-%s", prefix, tokens[0])
+		if len(s) > 32 {
+			s = s[:32]
+		}
+		glog.Infof("UseLegacyELBName feature-flag is set; built legacy name %q", s)
+		return s
 	}
-	if len(returnString) > 32 {
-		returnString = returnString[:32]
+
+	// The LoadBalancerName is exposed publicly as the DNS name for the load balancer.
+	// So this will likely become visible in a CNAME record - this is potentially some
+	// information leakage.
+	// But... if a user can see the CNAME record, they can see the actual record also,
+	// which will be the full cluster name.
+	s := prefix + "-" + strings.Replace(c, ".", "-", -1)
+
+	// We have a 32 character limit for ELB names
+	// But we always compute the hash and add it, lest we trick users into assuming that we never do this
+	h := fnv.New32a()
+	if _, err := h.Write([]byte(s)); err != nil {
+		glog.Fatalf("error hashing values: %v", err)
 	}
-	return returnString, nil
+	hashString := base32.HexEncoding.EncodeToString(h.Sum(nil))
+	hashString = strings.ToLower(hashString)
+	if len(hashString) > 6 {
+		hashString = hashString[:6]
+	}
+
+	maxBaseLength := 32 - len(hashString) - 1
+	if len(s) > maxBaseLength {
+		s = s[:maxBaseLength]
+	}
+	s = s + "-" + hashString
+
+	return s
 }
 
 func (m *KopsModelContext) ClusterName() string {
@@ -129,6 +163,11 @@ func (m *KopsModelContext) NodeInstanceGroups() []*kops.InstanceGroup {
 func (m *KopsModelContext) CloudTagsForInstanceGroup(ig *kops.InstanceGroup) (map[string]string, error) {
 	labels := make(map[string]string)
 
+	// Apply any user-specified global labels first so they can be overridden by IG-specific labels
+	for k, v := range m.Cluster.Spec.CloudLabels {
+		labels[k] = v
+	}
+
 	// Apply any user-specified labels
 	for k, v := range ig.Spec.CloudLabels {
 		labels[k] = v
@@ -137,15 +176,15 @@ func (m *KopsModelContext) CloudTagsForInstanceGroup(ig *kops.InstanceGroup) (ma
 	// The system tags take priority because the cluster likely breaks without them...
 
 	if ig.Spec.Role == kops.InstanceGroupRoleMaster {
-		labels["k8s.io/role/master"] = "1"
+		labels[awstasks.CloudTagInstanceGroupRolePrefix+strings.ToLower(string(kops.InstanceGroupRoleMaster))] = "1"
 	}
 
 	if ig.Spec.Role == kops.InstanceGroupRoleNode {
-		labels["k8s.io/role/node"] = "1"
+		labels[awstasks.CloudTagInstanceGroupRolePrefix+strings.ToLower(string(kops.InstanceGroupRoleNode))] = "1"
 	}
 
 	if ig.Spec.Role == kops.InstanceGroupRoleBastion {
-		labels["k8s.io/role/bastion"] = "1"
+		labels[awstasks.CloudTagInstanceGroupRolePrefix+strings.ToLower(string(kops.InstanceGroupRoleBastion))] = "1"
 	}
 
 	return labels, nil
@@ -220,4 +259,8 @@ func VersionGTE(version semver.Version, major uint64, minor uint64) bool {
 		return true
 	}
 	return false
+}
+
+func (c *KopsModelContext) WellKnownServiceIP(id int) (net.IP, error) {
+	return components.WellKnownServiceIP(&c.Cluster.Spec, id)
 }

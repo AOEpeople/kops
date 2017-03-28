@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kops"
 	"k8s.io/kops/cmd/kops/util"
 	api "k8s.io/kops/pkg/apis/kops"
@@ -35,7 +37,6 @@ import (
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup"
 	"k8s.io/kops/upup/pkg/fi/utils"
-	"k8s.io/kubernetes/pkg/util/sets"
 )
 
 type CreateClusterOptions struct {
@@ -77,8 +78,15 @@ type CreateClusterOptions struct {
 	// Enable/Disable Bastion Host complete setup
 	Bastion bool
 
+	// Specify tags for AWS instance groups
+	CloudLabels string
+
 	// Egress configuration - FOR TESTING ONLY
 	Egress string
+
+	// Specify tenancy (default or dedicated) for masters and nodes
+	MasterTenancy string
+	NodeTenancy   string
 }
 
 func (o *CreateClusterOptions) InitDefaults() {
@@ -127,7 +135,7 @@ func NewCmdCreateCluster(f *util.Factory, out io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&options.Yes, "yes", options.Yes, "Specify --yes to immediately create the cluster")
-	cmd.Flags().StringVar(&options.Target, "target", options.Target, "Target - direct, terraform")
+	cmd.Flags().StringVar(&options.Target, "target", options.Target, "Target - direct, terraform, cloudformation")
 	cmd.Flags().StringVar(&options.Models, "model", options.Models, "Models to apply (separate multiple models with commas)")
 
 	cmd.Flags().StringVar(&options.Cloud, "cloud", options.Cloud, "Cloud provider to use - gce, aws")
@@ -176,6 +184,13 @@ func NewCmdCreateCluster(f *util.Factory, out io.Writer) *cobra.Command {
 	// Bastion
 	cmd.Flags().BoolVar(&options.Bastion, "bastion", options.Bastion, "Pass the --bastion flag to enable a bastion instance group. Only applies to private topology.")
 
+	// Allow custom tags from the CLI
+	cmd.Flags().StringVar(&options.CloudLabels, "cloud-labels", options.CloudLabels, "A list of KV pairs used to tag all instance groups in AWS (eg \"Owner=John Doe,Team=Some Team\").")
+
+	// Master and Node Tenancy
+	cmd.Flags().StringVar(&options.MasterTenancy, "master-tenancy", options.MasterTenancy, "The tenancy of the master group on AWS. Can either be default or dedicated.")
+	cmd.Flags().StringVar(&options.NodeTenancy, "node-tenancy", options.NodeTenancy, "The tenancy of the node group on AWS. Can be either default or dedicated.")
+
 	return cmd
 }
 
@@ -203,6 +218,8 @@ func RunCreateCluster(f *util.Factory, out io.Writer, c *CreateClusterOptions) e
 	if c.OutDir == "" {
 		if c.Target == cloudup.TargetTerraform {
 			c.OutDir = "out/terraform"
+		} else if c.Target == cloudup.TargetCloudformation {
+			c.OutDir = "out/cloudformation"
 		} else {
 			c.OutDir = "out"
 		}
@@ -317,6 +334,11 @@ func RunCreateCluster(f *util.Factory, out io.Writer, c *CreateClusterOptions) e
 	var masters []*api.InstanceGroup
 	var nodes []*api.InstanceGroup
 	var instanceGroups []*api.InstanceGroup
+	cloudLabels, err := parseCloudLabels(c.CloudLabels)
+	if err != nil {
+		return fmt.Errorf("error parsing global cloud labels: %v", err)
+	}
+	cluster.Spec.CloudLabels = cloudLabels
 
 	// Build the master subnets
 	// The master zones is the default set of zones unless explicitly set
@@ -456,6 +478,18 @@ func RunCreateCluster(f *util.Factory, out io.Writer, c *CreateClusterOptions) e
 		}
 	}
 
+	if c.MasterTenancy != "" {
+		for _, group := range masters {
+			group.Spec.Tenancy = c.MasterTenancy
+		}
+	}
+
+	if c.NodeTenancy != "" {
+		for _, group := range nodes {
+			group.Spec.Tenancy = c.NodeTenancy
+		}
+	}
+
 	if len(c.NodeSecurityGroups) > 0 {
 		for _, group := range nodes {
 			group.Spec.AdditionalSecurityGroups = c.NodeSecurityGroups
@@ -570,11 +604,13 @@ func RunCreateCluster(f *util.Factory, out io.Writer, c *CreateClusterOptions) e
 			bastionGroup := &api.InstanceGroup{}
 			bastionGroup.Spec.Role = api.InstanceGroupRoleBastion
 			bastionGroup.ObjectMeta.Name = "bastions"
+			bastionGroup.Spec.Image = c.Image
 			instanceGroups = append(instanceGroups, bastionGroup)
 
 			cluster.Spec.Topology.Bastion = &api.BastionSpec{
 				BastionPublicName: "bastion." + clusterName,
 			}
+
 		}
 
 	default:
@@ -791,4 +827,31 @@ func trimCommonPrefix(names []string) []string {
 	}
 
 	return names
+}
+
+// parseCloudLabels takes a CSV list of key=value records and parses them into a map. Nested '='s are supported via
+// quoted strings (eg `foo="bar=baz"` parses to map[string]string{"foo":"bar=baz"}. Nested commas are not supported.
+func parseCloudLabels(s string) (map[string]string, error) {
+
+	// Replace commas with newlines to allow a single pass with csv.Reader.
+	// We can't use csv.Reader for the initial split because it would see each key=value record as a single field
+	// and significantly complicates using quoted fields as keys or values.
+	records := strings.Replace(s, ",", "\n", -1)
+
+	// Let the CSV library do the heavy-lifting in handling nested ='s
+	r := csv.NewReader(strings.NewReader(records))
+	r.Comma = '='
+	r.FieldsPerRecord = 2
+	r.LazyQuotes = false
+	r.TrimLeadingSpace = true
+	kvPairs, err := r.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("One or more key=value pairs are malformed:\n%s\n:%v", records, err)
+	}
+
+	m := make(map[string]string, len(kvPairs))
+	for _, pair := range kvPairs {
+		m[pair[0]] = pair[1]
+	}
+	return m, nil
 }

@@ -1,3 +1,27 @@
+output "cluster_name" {
+  value = "minimal-141.example.com"
+}
+
+output "master_security_group_ids" {
+  value = ["${aws_security_group.masters-minimal-141-example-com.id}"]
+}
+
+output "node_security_group_ids" {
+  value = ["${aws_security_group.nodes-minimal-141-example-com.id}"]
+}
+
+output "node_subnet_ids" {
+  value = ["${aws_subnet.us-test-1a-minimal-141-example-com.id}"]
+}
+
+output "region" {
+  value = "us-test-1"
+}
+
+output "vpc_id" {
+  value = "${aws_vpc.minimal-141-example-com.id}"
+}
+
 resource "aws_autoscaling_group" "master-us-test-1a-masters-minimal-141-example-com" {
   name                 = "master-us-test-1a.masters.minimal-141.example.com"
   launch_configuration = "${aws_launch_configuration.master-us-test-1a-masters-minimal-141-example-com.id}"
@@ -267,22 +291,31 @@ resource "aws_security_group_rule" "node-egress" {
   cidr_blocks       = ["0.0.0.0/0"]
 }
 
-resource "aws_security_group_rule" "node-to-master-tcp-4194" {
+resource "aws_security_group_rule" "node-to-master-tcp-1-4000" {
   type                     = "ingress"
   security_group_id        = "${aws_security_group.masters-minimal-141-example-com.id}"
   source_security_group_id = "${aws_security_group.nodes-minimal-141-example-com.id}"
-  from_port                = 4194
-  to_port                  = 4194
+  from_port                = 1
+  to_port                  = 4000
   protocol                 = "tcp"
 }
 
-resource "aws_security_group_rule" "node-to-master-tcp-443" {
+resource "aws_security_group_rule" "node-to-master-tcp-4003-65535" {
   type                     = "ingress"
   security_group_id        = "${aws_security_group.masters-minimal-141-example-com.id}"
   source_security_group_id = "${aws_security_group.nodes-minimal-141-example-com.id}"
-  from_port                = 443
-  to_port                  = 443
+  from_port                = 4003
+  to_port                  = 65535
   protocol                 = "tcp"
+}
+
+resource "aws_security_group_rule" "node-to-master-udp-1-65535" {
+  type                     = "ingress"
+  security_group_id        = "${aws_security_group.masters-minimal-141-example-com.id}"
+  source_security_group_id = "${aws_security_group.nodes-minimal-141-example-com.id}"
+  from_port                = 1
+  to_port                  = 65535
+  protocol                 = "udp"
 }
 
 resource "aws_security_group_rule" "ssh-external-to-master-0-0-0-0--0" {

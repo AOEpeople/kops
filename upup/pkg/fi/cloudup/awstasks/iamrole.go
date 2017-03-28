@@ -24,10 +24,11 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/golang/glog"
+	"k8s.io/kops/pkg/diff"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
+	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
-	"k8s.io/kubernetes/pkg/util/diff"
 	"net/url"
 	"reflect"
 )
@@ -158,7 +159,7 @@ func (_ *IAMRole) RenderAWS(t *awsup.AWSAPITarget, a, e, changes *IAMRole) error
 			if actualPolicy == policy {
 				glog.Warning("Policies were actually the same")
 			} else {
-				d := diff.StringDiff(actualPolicy, policy)
+				d := diff.FormatDiff(actualPolicy, policy)
 				glog.V(2).Infof("diff: %s", d)
 			}
 
@@ -198,4 +199,33 @@ func (_ *IAMRole) RenderTerraform(t *terraform.TerraformTarget, a, e, changes *I
 
 func (e *IAMRole) TerraformLink() *terraform.Literal {
 	return terraform.LiteralProperty("aws_iam_role", *e.Name, "name")
+}
+
+type cloudformationIAMRole struct {
+	RoleName                 *string `json:"RoleName"`
+	AssumeRolePolicyDocument map[string]interface{}
+}
+
+func (_ *IAMRole) RenderCloudformation(t *cloudformation.CloudformationTarget, a, e, changes *IAMRole) error {
+	jsonString, err := e.RolePolicyDocument.AsBytes()
+	if err != nil {
+		return err
+	}
+
+	data := make(map[string]interface{})
+	err = json.Unmarshal(jsonString, &data)
+	if err != nil {
+		return fmt.Errorf("error parsing RolePolicyDocument: %v", err)
+	}
+
+	cf := &cloudformationIAMRole{
+		RoleName:                 e.Name,
+		AssumeRolePolicyDocument: data,
+	}
+
+	return t.RenderResource("AWS::IAM::Role", *e.Name, cf)
+}
+
+func (e *IAMRole) CloudformationLink() *cloudformation.Literal {
+	return cloudformation.Ref("AWS::IAM::Role", *e.Name)
 }

@@ -18,25 +18,31 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
+
 	"github.com/golang/glog"
 	"github.com/spf13/pflag"
 	"k8s.io/kops/dns-controller/pkg/dns"
 	"k8s.io/kops/dns-controller/pkg/watchers"
 	"k8s.io/kubernetes/federation/pkg/dnsprovider"
-	client "k8s.io/kubernetes/pkg/client/clientset_generated/clientset/typed/core/v1"
-	client_extensions "k8s.io/kubernetes/pkg/client/clientset_generated/clientset/typed/extensions/v1beta1"
-	kubectl_util "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"os"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	_ "k8s.io/kubernetes/federation/pkg/dnsprovider/providers/aws/route53"
 	_ "k8s.io/kubernetes/federation/pkg/dnsprovider/providers/google/clouddns"
 )
 
 var (
 	flags = pflag.NewFlagSet("", pflag.ExitOnError)
+
+	// value overwritten during build. This can be used to resolve issues.
+	BuildVersion = "0.1"
 )
 
 func main() {
+	fmt.Printf("dns-controller version %s\n", BuildVersion)
+
 	dnsProviderId := "aws-route53"
 	flags.StringVar(&dnsProviderId, "dns", dnsProviderId, "DNS provider we should use (aws-route53, google-clouddns)")
 
@@ -51,9 +57,6 @@ func main() {
 
 	flag.Set("logtostderr", "true")
 
-	flags.AddGoFlagSet(flag.CommandLine)
-	clientConfig := kubectl_util.DefaultClientConfig(flags)
-
 	flags.Parse(os.Args)
 
 	zoneRules, err := dns.ParseZoneRules(zones)
@@ -62,21 +65,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	config, err := clientConfig.ClientConfig()
+	config, err := rest.InClusterConfig()
 	if err != nil {
 		glog.Errorf("error building client configuration: %v", err)
 		os.Exit(1)
 	}
 
-	kubeClient, err := client.NewForConfig(config)
+	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		glog.Fatalf("error building REST client: %v", err)
 	}
 
-	kubeExtensionsClient, err := client_extensions.NewForConfig(config)
-	if err != nil {
-		glog.Fatalf("error building extensions REST client: %v", err)
-	}
+	//kubeExtensionsClient, err := client_extensions.NewForConfig(config)
+	//if err != nil {
+	//	glog.Fatalf("error building extensions REST client: %v", err)
+	//}
 
 	dnsProvider, err := dnsprovider.GetDnsProvider(dnsProviderId, nil)
 	if err != nil {
@@ -114,7 +117,7 @@ func main() {
 
 	var ingressController *watchers.IngressController
 	if watchIngress {
-		ingressController, err = watchers.NewIngressController(kubeExtensionsClient, dnsController)
+		ingressController, err = watchers.NewIngressController(kubeClient, dnsController)
 		if err != nil {
 			glog.Errorf("Error building ingress controller: %v", err)
 			os.Exit(1)

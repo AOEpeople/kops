@@ -25,6 +25,7 @@ import (
 	"k8s.io/kops/pkg/featureflag"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
+	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
 )
 
@@ -200,6 +201,10 @@ type terraformVPC struct {
 func (_ *VPC) RenderTerraform(t *terraform.TerraformTarget, a, e, changes *VPC) error {
 	cloud := t.Cloud.(awsup.AWSCloud)
 
+	if err := t.AddOutputVariable("vpc_id", e.TerraformLink()); err != nil {
+		return err
+	}
+
 	shared := fi.BoolValue(e.Shared)
 	if shared {
 		// Not terraform owned / managed
@@ -228,4 +233,44 @@ func (e *VPC) TerraformLink() *terraform.Literal {
 	}
 
 	return terraform.LiteralProperty("aws_vpc", *e.Name, "id")
+}
+
+type cloudformationVPC struct {
+	CidrBlock          *string             `json:"CidrBlock,omitempty"`
+	EnableDnsHostnames *bool               `json:"EnableDnsHostnames,omitempty"`
+	EnableDnsSupport   *bool               `json:"EnableDnsSupport,omitempty"`
+	Tags               []cloudformationTag `json:"Tags,omitempty"`
+}
+
+func (_ *VPC) RenderCloudformation(t *cloudformation.CloudformationTarget, a, e, changes *VPC) error {
+	cloud := t.Cloud.(awsup.AWSCloud)
+
+	shared := fi.BoolValue(e.Shared)
+	if shared {
+		// Not cloudformation owned / managed
+		return nil
+	}
+
+	tf := &cloudformationVPC{
+		CidrBlock:          e.CIDR,
+		EnableDnsHostnames: e.EnableDNSHostnames,
+		EnableDnsSupport:   e.EnableDNSSupport,
+		Tags:               buildCloudformationTags(cloud.BuildTags(e.Name)),
+	}
+
+	return t.RenderResource("AWS::EC2::VPC", *e.Name, tf)
+}
+
+func (e *VPC) CloudformationLink() *cloudformation.Literal {
+	shared := fi.BoolValue(e.Shared)
+	if shared {
+		if e.ID == nil {
+			glog.Fatalf("ID must be set, if VPC is shared: %s", e)
+		}
+
+		glog.V(4).Infof("reusing existing VPC with id %q", *e.ID)
+		return cloudformation.LiteralString(*e.ID)
+	}
+
+	return cloudformation.Ref("AWS::EC2::VPC", *e.Name)
 }

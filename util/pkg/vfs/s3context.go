@@ -18,14 +18,16 @@ package vfs
 
 import (
 	"fmt"
+	"os"
+	"sync"
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/golang/glog"
-	"os"
-	"sync"
-	"time"
 )
 
 type S3Context struct {
@@ -76,6 +78,10 @@ func (s *S3Context) getRegionForBucket(bucket string) (string, error) {
 		awsRegion = "us-east-1"
 	}
 
+	if err := validateRegion(awsRegion); err != nil {
+		return "", err
+	}
+
 	request := &s3.GetBucketLocationInput{
 		Bucket: &bucket,
 	}
@@ -88,6 +94,7 @@ func (s *S3Context) getRegionForBucket(bucket string) (string, error) {
 
 	// and fallback to brute-forcing if it fails
 	if err != nil {
+		glog.V(2).Infof("unable to get bucket location from region %q; scanning all regions: %v", awsRegion, err)
 		response, err = bruteforceBucketLocation(&awsRegion, request)
 	}
 
@@ -128,21 +135,22 @@ See also: https://docs.aws.amazon.com/goto/WebAPI/s3-2006-03-01/GetBucketLocatio
 */
 func bruteforceBucketLocation(region *string, request *s3.GetBucketLocationInput) (*s3.GetBucketLocationOutput, error) {
 	session, _ := session.NewSession(&aws.Config{Region: region})
-	regions, err := ec2.New(session).DescribeRegions(nil)
 
+	regions, err := ec2.New(session).DescribeRegions(nil)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to list AWS regions: %v", err)
 	}
 
 	glog.V(2).Infof("Querying S3 for bucket location for %s", *request.Bucket)
 
-	out := make(chan *s3.GetBucketLocationOutput)
+	out := make(chan *s3.GetBucketLocationOutput, len(regions.Regions))
 	for _, region := range regions.Regions {
 		go func(regionName string) {
+			glog.V(8).Infof("Doing GetBucketLocation in %q", regionName)
 			s3Client := s3.New(session, &aws.Config{Region: aws.String(regionName)})
 			result, bucketError := s3Client.GetBucketLocation(request)
-
 			if bucketError == nil {
+				glog.V(8).Infof("GetBucketLocation succeeded in %q", regionName)
 				out <- result
 			}
 		}(*region.RegionName)
@@ -154,4 +162,17 @@ func bruteforceBucketLocation(region *string, request *s3.GetBucketLocationInput
 	case <-time.After(5 * time.Second):
 		return nil, fmt.Errorf("Could not retrieve location for AWS bucket %s", *request.Bucket)
 	}
+}
+
+func validateRegion(region string) error {
+	resolver := endpoints.DefaultResolver()
+	partitions := resolver.(endpoints.EnumPartitions).Partitions()
+	for _, p := range partitions {
+		for _, r := range p.Regions() {
+			if r.ID() == region {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%s is not a valid region\nPlease check that your region is formatted correctly (i.e. us-east-1)", region)
 }

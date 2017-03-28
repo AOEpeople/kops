@@ -19,11 +19,13 @@ package iam
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/golang/glog"
-	api "k8s.io/kops/pkg/apis/kops"
-	"k8s.io/kops/util/pkg/vfs"
-	"k8s.io/kubernetes/pkg/util/sets"
 	"strings"
+
+	"github.com/golang/glog"
+	"k8s.io/apimachinery/pkg/util/sets"
+	api "k8s.io/kops/pkg/apis/kops"
+	"k8s.io/kops/pkg/util/stringorslice"
+	"k8s.io/kops/util/pkg/vfs"
 )
 
 const IAMPolicyDefaultVersion = "2012-10-17"
@@ -44,20 +46,37 @@ func (p *IAMPolicy) AsJSON() (string, error) {
 type IAMStatementEffect string
 
 const IAMStatementEffectAllow IAMStatementEffect = "Allow"
+const IAMStatementEffectDeny IAMStatementEffect = "Deny"
 
 type IAMStatement struct {
 	Effect   IAMStatementEffect
-	Action   []string
-	Resource []string
+	Action   stringorslice.StringOrSlice
+	Resource stringorslice.StringOrSlice
+}
+
+func (l *IAMStatement) Equal(r *IAMStatement) bool {
+	if l.Effect != r.Effect {
+		return false
+	}
+	if !l.Action.Equal(r.Action) {
+		return false
+	}
+	if !l.Resource.Equal(r.Resource) {
+		return false
+	}
+	return true
 }
 
 type IAMPolicyBuilder struct {
-	Cluster *api.Cluster
-	Role    api.InstanceGroupRole
-	Region  string
+	Cluster      *api.Cluster
+	Role         api.InstanceGroupRole
+	Region       string
+	HostedZoneID string
 }
 
 func (b *IAMPolicyBuilder) BuildAWSIAMPolicy() (*IAMPolicy, error) {
+	wildcard := stringorslice.Slice([]string{"*"})
+
 	iamPrefix := b.IAMPrefix()
 
 	p := &IAMPolicy{
@@ -69,8 +88,8 @@ func (b *IAMPolicyBuilder) BuildAWSIAMPolicy() (*IAMPolicy, error) {
 		p.Statement = append(p.Statement, &IAMStatement{
 			// We grant a trivial (?) permission (DescribeRegions), because empty policies are not allowed
 			Effect:   IAMStatementEffectAllow,
-			Action:   []string{"ec2:DescribeRegions"},
-			Resource: []string{"*"},
+			Action:   stringorslice.Slice([]string{"ec2:DescribeRegions"}),
+			Resource: wildcard,
 		})
 
 		return p, nil
@@ -79,27 +98,10 @@ func (b *IAMPolicyBuilder) BuildAWSIAMPolicy() (*IAMPolicy, error) {
 	if b.Role == api.InstanceGroupRoleNode {
 		p.Statement = append(p.Statement, &IAMStatement{
 			Effect:   IAMStatementEffectAllow,
-			Action:   []string{"ec2:Describe*"},
-			Resource: []string{"*"},
+			Action:   stringorslice.Slice([]string{"ec2:Describe*"}),
+			Resource: wildcard,
 		})
 
-		// No longer needed in 1.3
-		//p.Statement = append(p.Statement, &IAMStatement{
-		//	Effect: IAMStatementEffectAllow,
-		//	Action: []string{ "ec2:AttachVolume" },
-		//	Resource: []string{"*"},
-		//})
-		//p.Statement = append(p.Statement, &IAMStatement{
-		//	Effect: IAMStatementEffectAllow,
-		//	Action: []string{ "ec2:DetachVolume" },
-		//	Resource: []string{"*"},
-		//})
-
-		p.Statement = append(p.Statement, &IAMStatement{
-			Effect:   IAMStatementEffectAllow,
-			Action:   []string{"route53:*"},
-			Resource: []string{"*"},
-		})
 	}
 
 	{
@@ -108,7 +110,7 @@ func (b *IAMPolicyBuilder) BuildAWSIAMPolicy() (*IAMPolicy, error) {
 		// a private logging pod or similar.
 		p.Statement = append(p.Statement, &IAMStatement{
 			Effect: IAMStatementEffectAllow,
-			Action: []string{
+			Action: stringorslice.Of(
 				"ecr:GetAuthorizationToken",
 				"ecr:BatchCheckLayerAvailability",
 				"ecr:GetDownloadUrlForLayer",
@@ -116,39 +118,33 @@ func (b *IAMPolicyBuilder) BuildAWSIAMPolicy() (*IAMPolicy, error) {
 				"ecr:DescribeRepositories",
 				"ecr:ListImages",
 				"ecr:BatchGetImage",
-			},
-			Resource: []string{"*"},
+			),
+			Resource: wildcard,
 		})
 	}
 
 	if b.Role == api.InstanceGroupRoleMaster {
 		p.Statement = append(p.Statement, &IAMStatement{
 			Effect:   IAMStatementEffectAllow,
-			Action:   []string{"ec2:*"},
-			Resource: []string{"*"},
+			Action:   stringorslice.Slice([]string{"ec2:*"}),
+			Resource: wildcard,
 		})
 
 		p.Statement = append(p.Statement, &IAMStatement{
 			Effect:   IAMStatementEffectAllow,
-			Action:   []string{"route53:*"},
-			Resource: []string{"*"},
-		})
-
-		p.Statement = append(p.Statement, &IAMStatement{
-			Effect:   IAMStatementEffectAllow,
-			Action:   []string{"elasticloadbalancing:*"},
-			Resource: []string{"*"},
+			Action:   stringorslice.Slice([]string{"elasticloadbalancing:*"}),
+			Resource: wildcard,
 		})
 
 		p.Statement = append(p.Statement, &IAMStatement{
 			Effect: IAMStatementEffectAllow,
-			Action: []string{
+			Action: stringorslice.Of(
 				"autoscaling:DescribeAutoScalingGroups",
 				"autoscaling:DescribeAutoScalingInstances",
 				"autoscaling:SetDesiredCapacity",
 				"autoscaling:TerminateInstanceInAutoScalingGroup",
-			},
-			Resource: []string{"*"},
+			),
+			Resource: wildcard,
 		})
 
 		// Restrict the KMS permissions to only the keys that are being used
@@ -164,7 +160,7 @@ func (b *IAMPolicyBuilder) BuildAWSIAMPolicy() (*IAMPolicy, error) {
 		if kmsKeyIDs.Len() > 0 {
 			p.Statement = append(p.Statement, &IAMStatement{
 				Effect: IAMStatementEffectAllow,
-				Action: []string{
+				Action: stringorslice.Of(
 					"kms:Encrypt",
 					"kms:Decrypt",
 					"kms:ReEncrypt*",
@@ -173,11 +169,31 @@ func (b *IAMPolicyBuilder) BuildAWSIAMPolicy() (*IAMPolicy, error) {
 					"kms:CreateGrant",
 					"kms:ListGrants",
 					"kms:RevokeGrant",
-				},
-				Resource: kmsKeyIDs.List(),
+				),
+				Resource: stringorslice.Slice(kmsKeyIDs.List()),
 			})
 		}
 	}
+
+	p.Statement = append(p.Statement, &IAMStatement{
+		Effect: IAMStatementEffectAllow,
+		Action: stringorslice.Of("route53:ChangeResourceRecordSets",
+			"route53:ListResourceRecordSets",
+			"route53:GetHostedZone"),
+		Resource: stringorslice.Slice([]string{"arn:aws:route53:::hostedzone/" + b.HostedZoneID}),
+	})
+
+	p.Statement = append(p.Statement, &IAMStatement{
+		Effect:   IAMStatementEffectAllow,
+		Action:   stringorslice.Slice([]string{"route53:GetChange"}),
+		Resource: stringorslice.Slice([]string{"arn:aws:route53:::change/*"}),
+	})
+
+	p.Statement = append(p.Statement, &IAMStatement{
+		Effect:   IAMStatementEffectAllow,
+		Action:   stringorslice.Slice([]string{"route53:ListHostedZones"}),
+		Resource: wildcard,
+	})
 
 	// For S3 IAM permissions, we grant permissions to subtrees.  So find the parents;
 	// we don't need to grant mypath and mypath/child.
@@ -231,19 +247,19 @@ func (b *IAMPolicyBuilder) BuildAWSIAMPolicy() (*IAMPolicy, error) {
 
 			p.Statement = append(p.Statement, &IAMStatement{
 				Effect: IAMStatementEffectAllow,
-				Action: []string{"s3:*"},
-				Resource: []string{
-					iamPrefix + ":s3:::" + iamS3Path,
-					iamPrefix + ":s3:::" + iamS3Path + "/*",
-				},
+				Action: stringorslice.Slice([]string{"s3:*"}),
+				Resource: stringorslice.Of(
+					iamPrefix+":s3:::"+iamS3Path,
+					iamPrefix+":s3:::"+iamS3Path+"/*",
+				),
 			})
 
 			p.Statement = append(p.Statement, &IAMStatement{
 				Effect: IAMStatementEffectAllow,
-				Action: []string{"s3:GetBucketLocation", "s3:ListBucket"},
-				Resource: []string{
+				Action: stringorslice.Of("s3:GetBucketLocation", "s3:ListBucket"),
+				Resource: stringorslice.Slice([]string{
 					iamPrefix + ":s3:::" + s3Path.Bucket(),
-				},
+				}),
 			})
 		} else if _, ok := vfsPath.(*vfs.MemFSPath); ok {
 			// Tests -ignore - nothing we can do in terms of IAM policy

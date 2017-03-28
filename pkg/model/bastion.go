@@ -17,10 +17,10 @@ limitations under the License.
 package model
 
 import (
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awstasks"
-	"k8s.io/kubernetes/pkg/util/sets"
 	"time"
 )
 
@@ -174,10 +174,7 @@ func (b *BastionModelBuilder) Build(c *fi.ModelBuilderContext) error {
 	// Create ELB itself
 	var elb *awstasks.LoadBalancer
 	{
-		elbID, err := b.GetELBName32("bastion")
-		if err != nil {
-			return err
-		}
+		loadBalancerName := b.GetELBName32("bastion")
 
 		idleTimeout := BastionELBDefaultIdleTimeout
 		if b.Cluster.Spec.Topology != nil && b.Cluster.Spec.Topology.Bastion != nil && b.Cluster.Spec.Topology.Bastion.IdleTimeoutSeconds != nil {
@@ -185,8 +182,8 @@ func (b *BastionModelBuilder) Build(c *fi.ModelBuilderContext) error {
 		}
 
 		elb = &awstasks.LoadBalancer{
-			Name: s("bastion." + b.ClusterName()),
-			ID:   s(elbID),
+			Name:             s("bastion." + b.ClusterName()),
+			LoadBalancerName: s(loadBalancerName),
 			SecurityGroups: []*awstasks.SecurityGroup{
 				b.LinkToELBSecurityGroup(BastionELBSecurityGroupPrefix),
 			},

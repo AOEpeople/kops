@@ -25,6 +25,7 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
+	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
 )
 
@@ -58,6 +59,10 @@ func (e *LoadBalancerAttachment) Find(c *fi.Context) (*LoadBalancerAttachment, e
 		return actual, nil
 		// ASG only
 	} else if e.AutoscalingGroup != nil && e.Instance == nil {
+		if aws.StringValue(e.LoadBalancer.LoadBalancerName) == "" {
+			return nil, fmt.Errorf("LoadBalancer did not have LoadBalancerName set")
+		}
+
 		g, err := findAutoscalingGroup(cloud, *e.AutoscalingGroup.Name)
 		if err != nil {
 			return nil, err
@@ -67,7 +72,7 @@ func (e *LoadBalancerAttachment) Find(c *fi.Context) (*LoadBalancerAttachment, e
 		}
 
 		for _, name := range g.LoadBalancerNames {
-			if aws.StringValue(name) != *e.LoadBalancer.ID {
+			if aws.StringValue(name) != *e.LoadBalancer.LoadBalancerName {
 				continue
 			}
 
@@ -105,25 +110,31 @@ func (s *LoadBalancerAttachment) CheckChanges(a, e, changes *LoadBalancerAttachm
 }
 
 func (_ *LoadBalancerAttachment) RenderAWS(t *awsup.AWSAPITarget, a, e, changes *LoadBalancerAttachment) error {
+	if e.LoadBalancer == nil {
+		return fi.RequiredField("LoadBalancer")
+	}
+	loadBalancerName := fi.StringValue(e.LoadBalancer.LoadBalancerName)
+	if loadBalancerName == "" {
+		return fi.RequiredField("LoadBalancer.LoadBalancerName")
+	}
+
 	if e.AutoscalingGroup != nil && e.Instance == nil {
 		request := &autoscaling.AttachLoadBalancersInput{}
 		request.AutoScalingGroupName = e.AutoscalingGroup.Name
-		request.LoadBalancerNames = []*string{e.LoadBalancer.ID}
-		glog.V(2).Infof("Attaching autoscaling group %q to ELB %q", *e.AutoscalingGroup.Name, *e.LoadBalancer.Name)
+		request.LoadBalancerNames = aws.StringSlice([]string{loadBalancerName})
+
+		glog.V(2).Infof("Attaching autoscaling group %q to ELB %q", fi.StringValue(e.AutoscalingGroup.Name), loadBalancerName)
 		_, err := t.Cloud.Autoscaling().AttachLoadBalancers(request)
 		if err != nil {
 			return fmt.Errorf("error attaching autoscaling group to ELB: %v", err)
 		}
 	} else if e.AutoscalingGroup == nil && e.Instance != nil {
 		request := &elb.RegisterInstancesWithLoadBalancerInput{}
-		var instances []*elb.Instance
-		i := &elb.Instance{
-			InstanceId: e.Instance.ID,
-		}
-		instances = append(instances, i)
-		request.Instances = instances
+		request.Instances = append(request.Instances, &elb.Instance{InstanceId: e.Instance.ID})
+		request.LoadBalancerName = aws.String(loadBalancerName)
+
+		glog.V(2).Infof("Attaching instance %q to ELB %q", fi.StringValue(e.Instance.ID), loadBalancerName)
 		_, err := t.Cloud.ELB().RegisterInstancesWithLoadBalancer(request)
-		glog.V(2).Infof("Attaching instance %q to ELB %q", *e.AutoscalingGroup.Name, *e.LoadBalancer.Name)
 		if err != nil {
 			return fmt.Errorf("error attaching instance to ELB: %v", err)
 		}
@@ -157,6 +168,26 @@ func (e *LoadBalancerAttachment) TerraformLink() *terraform.Literal {
 		return terraform.LiteralProperty("aws_autoscaling_attachment", *e.AutoscalingGroup.Name, "id")
 	} else if e.AutoscalingGroup == nil && e.Instance != nil {
 		return terraform.LiteralProperty("aws_elb_attachment", *e.LoadBalancer.Name, "id")
+	}
+	return nil
+}
+
+func (_ *LoadBalancerAttachment) RenderCloudformation(t *cloudformation.CloudformationTarget, a, e, changes *LoadBalancerAttachment) error {
+	if e.AutoscalingGroup != nil {
+		cfObj, ok := t.Find(e.AutoscalingGroup.CloudformationLink())
+		if !ok {
+			// topo-sort fail?
+			return fmt.Errorf("AutoScalingGroup not yet rendered")
+		}
+		cf, ok := cfObj.(*cloudformationAutoscalingGroup)
+		if !ok {
+			return fmt.Errorf("unexpected type for CF record: %T", cfObj)
+		}
+
+		cf.LoadBalancerNames = append(cf.LoadBalancerNames, e.LoadBalancer.CloudformationLink())
+	}
+	if e.Instance != nil {
+		return fmt.Errorf("expected Instance to be nil")
 	}
 	return nil
 }

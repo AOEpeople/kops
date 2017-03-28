@@ -1,3 +1,31 @@
+output "bastion_security_group_ids" {
+  value = ["${aws_security_group.bastion-privatecanal-example-com.id}"]
+}
+
+output "cluster_name" {
+  value = "privatecanal.example.com"
+}
+
+output "master_security_group_ids" {
+  value = ["${aws_security_group.masters-privatecanal-example-com.id}"]
+}
+
+output "node_security_group_ids" {
+  value = ["${aws_security_group.nodes-privatecanal-example-com.id}"]
+}
+
+output "node_subnet_ids" {
+  value = ["${aws_subnet.us-test-1a-privatecanal-example-com.id}"]
+}
+
+output "region" {
+  value = "us-test-1"
+}
+
+output "vpc_id" {
+  value = "${aws_vpc.privatecanal-example-com.id}"
+}
+
 resource "aws_autoscaling_attachment" "bastion-privatecanal-example-com" {
   elb                    = "${aws_elb.bastion-privatecanal-example-com.id}"
   autoscaling_group_name = "${aws_autoscaling_group.bastion-privatecanal-example-com.id}"
@@ -119,7 +147,7 @@ resource "aws_eip" "us-test-1a-privatecanal-example-com" {
 }
 
 resource "aws_elb" "api-privatecanal-example-com" {
-  name = "api-privatecanal"
+  name = "api-privatecanal-example--6tql53"
 
   listener = {
     instance_port     = 443
@@ -139,6 +167,8 @@ resource "aws_elb" "api-privatecanal-example-com" {
     timeout             = 5
   }
 
+  idle_timeout = 300
+
   tags = {
     KubernetesCluster = "privatecanal.example.com"
     Name              = "api.privatecanal.example.com"
@@ -146,7 +176,7 @@ resource "aws_elb" "api-privatecanal-example-com" {
 }
 
 resource "aws_elb" "bastion-privatecanal-example-com" {
-  name = "bastion-privatecanal"
+  name = "bastion-privatecanal-exam-hmhsp5"
 
   listener = {
     instance_port     = 22
@@ -524,22 +554,31 @@ resource "aws_security_group_rule" "node-egress" {
   cidr_blocks       = ["0.0.0.0/0"]
 }
 
-resource "aws_security_group_rule" "node-to-master-tcp-4194" {
+resource "aws_security_group_rule" "node-to-master-tcp-1-4000" {
   type                     = "ingress"
   security_group_id        = "${aws_security_group.masters-privatecanal-example-com.id}"
   source_security_group_id = "${aws_security_group.nodes-privatecanal-example-com.id}"
-  from_port                = 4194
-  to_port                  = 4194
+  from_port                = 1
+  to_port                  = 4000
   protocol                 = "tcp"
 }
 
-resource "aws_security_group_rule" "node-to-master-tcp-443" {
+resource "aws_security_group_rule" "node-to-master-tcp-4003-65535" {
   type                     = "ingress"
   security_group_id        = "${aws_security_group.masters-privatecanal-example-com.id}"
   source_security_group_id = "${aws_security_group.nodes-privatecanal-example-com.id}"
-  from_port                = 443
-  to_port                  = 443
+  from_port                = 4003
+  to_port                  = 65535
   protocol                 = "tcp"
+}
+
+resource "aws_security_group_rule" "node-to-master-udp-1-65535" {
+  type                     = "ingress"
+  security_group_id        = "${aws_security_group.masters-privatecanal-example-com.id}"
+  source_security_group_id = "${aws_security_group.nodes-privatecanal-example-com.id}"
+  from_port                = 1
+  to_port                  = 65535
+  protocol                 = "udp"
 }
 
 resource "aws_security_group_rule" "ssh-elb-to-bastion" {

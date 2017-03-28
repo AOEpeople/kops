@@ -17,17 +17,18 @@ limitations under the License.
 package awstasks
 
 import (
-	"fmt"
-
 	"encoding/base64"
-	"strings"
-
+	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
 	"github.com/golang/glog"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
+	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -37,13 +38,12 @@ type LaunchConfiguration struct {
 
 	UserData *fi.ResourceHolder
 
-	ImageID                    *string
-	InstanceType               *string
-	SSHKey                     *SSHKey
-	SecurityGroups             []*SecurityGroup
-	AdditionalSecurityGroupIDs []string
-	AssociatePublicIP          *bool
-	IAMInstanceProfile         *IAMInstanceProfile
+	ImageID            *string
+	InstanceType       *string
+	SSHKey             *SSHKey
+	SecurityGroups     []*SecurityGroup
+	AssociatePublicIP  *bool
+	IAMInstanceProfile *IAMInstanceProfile
 
 	// RootVolumeSize is the size of the EBS root volume to use, in GB
 	RootVolumeSize *int64
@@ -54,6 +54,9 @@ type LaunchConfiguration struct {
 	SpotPrice string
 
 	ID *string
+
+	// Tenancy. Can be either default or dedicated.
+	Tenancy *string
 }
 
 var _ fi.CompareWithID = &LaunchConfiguration{}
@@ -114,6 +117,8 @@ func (e *LaunchConfiguration) Find(c *fi.Context) (*LaunchConfiguration, error) 
 	for _, sgID := range lc.SecurityGroups {
 		securityGroups = append(securityGroups, &SecurityGroup{ID: sgID})
 	}
+	sort.Sort(OrderSecurityGroupsById(securityGroups))
+
 	actual.SecurityGroups = securityGroups
 
 	// Find the root volume
@@ -194,7 +199,15 @@ func (e *LaunchConfiguration) buildRootDevice(cloud awsup.AWSCloud) (map[string]
 }
 
 func (e *LaunchConfiguration) Run(c *fi.Context) error {
+	// TODO: Make Normalize a standard method
+	e.Normalize()
+
 	return fi.DefaultDeltaRunMethod(e, c)
+}
+
+func (e *LaunchConfiguration) Normalize() {
+	// We need to sort our arrays consistently, so we don't get spurious changes
+	sort.Stable(OrderSecurityGroupsById(e.SecurityGroups))
 }
 
 func (s *LaunchConfiguration) CheckChanges(a, e, changes *LaunchConfiguration) error {
@@ -234,13 +247,13 @@ func (_ *LaunchConfiguration) RenderAWS(t *awsup.AWSAPITarget, a, e, changes *La
 		request.KeyName = e.SSHKey.Name
 	}
 
+	if e.Tenancy != nil {
+		request.PlacementTenancy = e.Tenancy
+	}
+
 	securityGroupIDs := []*string{}
 	for _, sg := range e.SecurityGroups {
 		securityGroupIDs = append(securityGroupIDs, sg.ID)
-	}
-
-	for i := range e.AdditionalSecurityGroupIDs {
-		securityGroupIDs = append(securityGroupIDs, &e.AdditionalSecurityGroupIDs[i])
 	}
 
 	request.SecurityGroups = securityGroupIDs
@@ -368,9 +381,6 @@ func (_ *LaunchConfiguration) RenderTerraform(t *terraform.TerraformTarget, a, e
 		tf.SecurityGroups = append(tf.SecurityGroups, sg.TerraformLink())
 	}
 
-	for _, sg := range e.AdditionalSecurityGroupIDs {
-		tf.SecurityGroups = append(tf.SecurityGroups, terraform.LiteralFromStringValue(sg))
-	}
 	tf.AssociatePublicIpAddress = e.AssociatePublicIP
 
 	{
@@ -400,7 +410,8 @@ func (_ *LaunchConfiguration) RenderTerraform(t *terraform.TerraformTarget, a, e
 
 		if len(ephemeralDevices) != 0 {
 			tf.EphemeralBlockDevice = []*terraformBlockDevice{}
-			for deviceName, bdm := range ephemeralDevices {
+			for _, deviceName := range sets.StringKeySet(ephemeralDevices).List() {
+				bdm := ephemeralDevices[deviceName]
 				tf.EphemeralBlockDevice = append(tf.EphemeralBlockDevice, &terraformBlockDevice{
 					VirtualName: bdm.VirtualName,
 					DeviceName:  fi.String(deviceName),
@@ -427,4 +438,128 @@ func (_ *LaunchConfiguration) RenderTerraform(t *terraform.TerraformTarget, a, e
 
 func (e *LaunchConfiguration) TerraformLink() *terraform.Literal {
 	return terraform.LiteralProperty("aws_launch_configuration", *e.Name, "id")
+}
+
+type cloudformationLaunchConfiguration struct {
+	AssociatePublicIpAddress *bool                        `json:"AssociatePublicIpAddress,omitempty"`
+	BlockDeviceMappings      []*cloudformationBlockDevice `json:"BlockDeviceMappings,omitempty"`
+	IAMInstanceProfile       *cloudformation.Literal      `json:"IamInstanceProfile,omitempty"`
+	ImageID                  *string                      `json:"ImageId,omitempty"`
+	InstanceType             *string                      `json:"InstanceType,omitempty"`
+	KeyName                  *string                      `json:"KeyName,omitempty"`
+	SecurityGroups           []*cloudformation.Literal    `json:"SecurityGroups,omitempty"`
+	SpotPrice                *string                      `json:"SpotPrice,omitempty"`
+	UserData                 *string                      `json:"UserData,omitempty"`
+
+	//NamePrefix               *string                 `json:"name_prefix,omitempty"`
+	//Lifecycle                *cloudformation.Lifecycle    `json:"lifecycle,omitempty"`
+}
+
+type cloudformationBlockDevice struct {
+	// For ephemeral devices
+	DeviceName  *string `json:"DeviceName,omitempty"`
+	VirtualName *string `json:"VirtualName,omitempty"`
+
+	// For root
+	Ebs *cloudformationBlockDeviceEBS `json:"Ebs,omitempty"`
+}
+
+type cloudformationBlockDeviceEBS struct {
+	VolumeType          *string `json:"VolumeType,omitempty"`
+	VolumeSize          *int64  `json:"VolumeSize,omitempty"`
+	DeleteOnTermination *bool   `json:"DeleteOnTermination,omitempty"`
+}
+
+func (_ *LaunchConfiguration) RenderCloudformation(t *cloudformation.CloudformationTarget, a, e, changes *LaunchConfiguration) error {
+	cloud := t.Cloud.(awsup.AWSCloud)
+
+	if e.ImageID == nil {
+		return fi.RequiredField("ImageID")
+	}
+	image, err := cloud.ResolveImage(*e.ImageID)
+	if err != nil {
+		return err
+	}
+
+	cf := &cloudformationLaunchConfiguration{
+		//NamePrefix:   fi.String(*e.Name + "-"),
+		ImageID:      image.ImageId,
+		InstanceType: e.InstanceType,
+	}
+
+	if e.SpotPrice != "" {
+		cf.SpotPrice = aws.String(e.SpotPrice)
+	}
+
+	if e.SSHKey != nil {
+		if e.SSHKey.Name == nil {
+			return fmt.Errorf("SSHKey Name not set")
+		}
+		cf.KeyName = e.SSHKey.Name
+	}
+
+	for _, sg := range e.SecurityGroups {
+		cf.SecurityGroups = append(cf.SecurityGroups, sg.CloudformationLink())
+	}
+	cf.AssociatePublicIpAddress = e.AssociatePublicIP
+
+	{
+		rootDevices, err := e.buildRootDevice(cloud)
+		if err != nil {
+			return err
+		}
+
+		ephemeralDevices, err := buildEphemeralDevices(e.InstanceType)
+		if err != nil {
+			return err
+		}
+
+		if len(rootDevices) != 0 {
+			if len(rootDevices) != 1 {
+				return fmt.Errorf("unexpectedly found multiple root devices")
+			}
+
+			for deviceName, bdm := range rootDevices {
+				d := &cloudformationBlockDevice{
+					DeviceName: fi.String(deviceName),
+					Ebs: &cloudformationBlockDeviceEBS{
+						VolumeType:          bdm.EbsVolumeType,
+						VolumeSize:          bdm.EbsVolumeSize,
+						DeleteOnTermination: fi.Bool(true),
+					},
+				}
+				cf.BlockDeviceMappings = append(cf.BlockDeviceMappings, d)
+			}
+		}
+
+		if len(ephemeralDevices) != 0 {
+			for deviceName, bdm := range ephemeralDevices {
+				cf.BlockDeviceMappings = append(cf.BlockDeviceMappings, &cloudformationBlockDevice{
+					VirtualName: bdm.VirtualName,
+					DeviceName:  fi.String(deviceName),
+				})
+			}
+		}
+	}
+
+	if e.UserData != nil {
+		d, err := e.UserData.AsBytes()
+		if err != nil {
+			return fmt.Errorf("error rendering AutoScalingLaunchConfiguration UserData: %v", err)
+		}
+		cf.UserData = aws.String(base64.StdEncoding.EncodeToString(d))
+	}
+
+	if e.IAMInstanceProfile != nil {
+		cf.IAMInstanceProfile = e.IAMInstanceProfile.CloudformationLink()
+	}
+
+	// So that we can update configurations
+	//tf.Lifecycle = &cloudformation.Lifecycle{CreateBeforeDestroy: fi.Bool(true)}
+
+	return t.RenderResource("AWS::AutoScaling::LaunchConfiguration", *e.Name, cf)
+}
+
+func (e *LaunchConfiguration) CloudformationLink() *cloudformation.Literal {
+	return cloudformation.Ref("AWS::AutoScaling::LaunchConfiguration", *e.Name)
 }

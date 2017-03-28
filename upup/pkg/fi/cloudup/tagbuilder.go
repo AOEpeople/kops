@@ -27,10 +27,10 @@ import (
 	"fmt"
 
 	"github.com/golang/glog"
+	"k8s.io/apimachinery/pkg/util/sets"
 	api "k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/util"
 	"k8s.io/kops/upup/pkg/fi"
-	"k8s.io/kubernetes/pkg/util/sets"
 )
 
 func buildCloudupTags(cluster *api.Cluster) (sets.String, error) {
@@ -53,13 +53,12 @@ func buildCloudupTags(cluster *api.Cluster) (sets.String, error) {
 		// TODO combine with External
 		tags.Insert("_networking_kubenet", "_networking_external")
 	} else {
-		return nil, fmt.Errorf("No networking mode set")
+		return nil, fmt.Errorf("no networking mode set")
 	}
 
 	switch cluster.Spec.CloudProvider {
 	case "gce":
 		{
-			glog.Fatalf("GCE is (probably) not working currently - please ping @justinsb for cleanup")
 			tags.Insert("_gce")
 		}
 
@@ -117,9 +116,6 @@ func buildNodeupTags(role api.InstanceGroupRole, cluster *api.Cluster, clusterTa
 	case api.InstanceGroupRoleNode:
 		tags.Insert("_kubernetes_pool")
 
-		// TODO: Should we run _protokube on the nodes?
-		tags.Insert("_protokube")
-
 	case api.InstanceGroupRoleMaster:
 		tags.Insert("_kubernetes_master")
 
@@ -128,19 +124,11 @@ func buildNodeupTags(role api.InstanceGroupRole, cluster *api.Cluster, clusterTa
 			tags.Insert("_kubernetes_pool")
 		}
 
-		tags.Insert("_protokube")
-
 	case api.InstanceGroupRoleBastion:
 		// No tags
 
 	default:
 		return nil, fmt.Errorf("Unrecognized role: %v", role)
-	}
-
-	// TODO: Replace with list of CNI plugins ?
-	if usesCNI(cluster) {
-		tags.Insert("_cni_bridge", "_cni_host_local", "_cni_loopback", "_cni_ptp", "_cni_flannel")
-		//tags.Insert("_cni_tuning")
 	}
 
 	switch fi.StringValue(cluster.Spec.UpdatePolicy) {

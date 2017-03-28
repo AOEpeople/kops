@@ -26,6 +26,7 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
+	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
 )
 
@@ -114,7 +115,17 @@ func (e *DNSName) Find(c *fi.Context) (*DNSName, error) {
 			if lb == nil {
 				glog.Warningf("Unable to find load balancer with DNS name: %q", dnsName)
 			} else {
-				actual.TargetLoadBalancer = &LoadBalancer{ID: lb.LoadBalancerName}
+				loadBalancerName := aws.StringValue(lb.LoadBalancerName)
+				tagMap, err := describeLoadBalancerTags(cloud, []string{loadBalancerName})
+				if err != nil {
+					return nil, err
+				}
+				tags := tagMap[loadBalancerName]
+				nameTag, _ := awsup.FindELBTag(tags, "Name")
+				if nameTag == "" {
+					return nil, fmt.Errorf("Found ELB %q linked to DNS name %q, but it did not have a Name tag", loadBalancerName, fi.StringValue(e.Name))
+				}
+				actual.TargetLoadBalancer = &LoadBalancer{Name: fi.String(nameTag)}
 			}
 		}
 	}
@@ -209,4 +220,42 @@ func (_ *DNSName) RenderTerraform(t *terraform.TerraformTarget, a, e, changes *D
 
 func (e *DNSName) TerraformLink() *terraform.Literal {
 	return terraform.LiteralSelfLink("aws_route53_record", *e.Name)
+}
+
+type cloudformationRoute53Record struct {
+	Name            *string  `json:"Name"`
+	Type            *string  `json:"Type"`
+	TTL             *string  `json:"TTL,omitempty"`
+	ResourceRecords []string `json:"ResourceRecords,omitempty"`
+
+	AliasTarget *cloudformationAlias    `json:"AliasTarget,omitempty"`
+	ZoneID      *cloudformation.Literal `json:"HostedZoneId"`
+}
+
+type cloudformationAlias struct {
+	DNSName              *cloudformation.Literal `json:"DNSName,omitempty"`
+	ZoneID               *cloudformation.Literal `json:"HostedZoneId,omitempty"`
+	EvaluateTargetHealth *bool                   `json:"EvaluateTargetHealth,omitempty"`
+}
+
+func (_ *DNSName) RenderCloudformation(t *cloudformation.CloudformationTarget, a, e, changes *DNSName) error {
+	cf := &cloudformationRoute53Record{
+		Name:   e.Name,
+		ZoneID: e.Zone.CloudformationLink(),
+		Type:   e.ResourceType,
+	}
+
+	if e.TargetLoadBalancer != nil {
+		cf.AliasTarget = &cloudformationAlias{
+			DNSName:              e.TargetLoadBalancer.CloudformationAttrDNSName(),
+			EvaluateTargetHealth: aws.Bool(false),
+			ZoneID:               e.TargetLoadBalancer.CloudformationAttrCanonicalHostedZoneNameID(),
+		}
+	}
+
+	return t.RenderResource("AWS::Route53::RecordSet", *e.Name, cf)
+}
+
+func (e *DNSName) CloudformationLink() *cloudformation.Literal {
+	return cloudformation.Ref("AWS::Route53::RecordSet", *e.Name)
 }

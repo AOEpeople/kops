@@ -19,6 +19,7 @@ kops create cluster
       --bastion                              Pass the --bastion flag to enable a bastion instance group. Only applies to private topology.
       --channel string                       Channel for default versions and configuration to use (default "stable")
       --cloud string                         Cloud provider to use - gce, aws
+      --cloud-labels string                  A list of KV pairs used to tag all instance groups in AWS (eg "Owner=John Doe,Team=Some Team").
       --dns string                           DNS hosted zone to use: public|private. Default is 'public'. (default "Public")
       --dns-zone string                      DNS hosted zone to use (defaults to longest matching zone)
       --image string                         Image to use
@@ -29,14 +30,14 @@ kops create cluster
       --master-zones stringSlice             Zones in which to run masters (must be an odd number)
       --model string                         Models to apply (separate multiple models with commas) (default "config,proto,cloudup")
       --network-cidr string                  Set to override the default network CIDR
-      --networking string                    Networking mode to use.  kubenet (default), classic, external, cni, kopeio-vxlan, weave, flannel, calico. (default "kubenet")
+      --networking string                    Networking mode to use.  kubenet (default), classic, external, kopeio-vxlan, weave, flannel, calico, canal. (default "kubenet")
       --node-count int32                     Set the number of nodes
       --node-security-groups stringSlice     Add precreated additional security groups to nodes.
       --node-size string                     Set instance size for nodes
       --out string                           Path to write any local output
       --project string                       Project to use (must be set on GCE)
       --ssh-public-key string                SSH public key to use (default "~/.ssh/id_rsa.pub")
-      --target string                        Target - direct, terraform (default "direct")
+      --target string                        Target - direct, terraform, cloudformation (default "direct")
   -t, --topology string                      Controls network topology for the cluster. public|private. Default is 'public'. (default "public")
       --vpc string                           Set to use a shared VPC
       --yes                                  Specify --yes to immediately create the cluster

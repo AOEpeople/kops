@@ -72,8 +72,13 @@ You should record the SecretAccessKey and AccessKeyID in the returned JSON
 output, and then use them below:
 
 ```bash
-aws configure # Input your credentials here
-aws iam list-users
+# configure the aws client to use your new IAM user
+aws configure           # Use your new access and secret key here
+aws iam list-users      # you should see a list of all your IAM users here
+
+# Because "aws configure" doesn't export these vars for kops to use, we export them now
+export AWS_ACCESS_KEY_ID=<access key>
+export AWS_SECRET_ACCESS_KEY=<secret key>
 ```
 
 ## Configure DNS
@@ -98,7 +103,7 @@ of a domain you host in Route53.  This requires creating a second hosted zone
 in route53, and then setting up route delegation to the new zone.
 
 In this example you own `example.com` and your records for Kubernetes would
-look like `etcd-us-east-1c.internal.clustername.kubernetes.example.com`
+look like `etcd-us-east-1c.internal.clustername.subdomain.example.com`
 
 This is copying the NS servers of your **SUBDOMAIN** up to the **PARENT**
 domain in Route53.  To do this you should:
@@ -107,7 +112,9 @@ domain in Route53.  To do this you should:
   already done this you can also [get the values](ns.md))
 
 ```bash
-ID=$(uuidgen) && aws route53 create-hosted-zone --name subdomain.example.com --caller-reference $ID | jq .DelegationSet.NameServers
+# Note: This example assumes you have jq installed locally.
+ID=$(uuidgen) && aws route53 create-hosted-zone --name subdomain.example.com --caller-reference $ID | \
+    jq .DelegationSet.NameServers
 ```
 
 * Note your **PARENT** hosted zone id
@@ -159,7 +166,7 @@ aws route53 change-resource-record-sets \
  --change-batch file://subdomain.json
 ```
 
-Now traffic to `*.example.com` will be routed to the correct subdomain hosted zone in Route53.
+Now traffic to `*.subdomain.example.com` will be routed to the correct subdomain hosted zone in Route53.
 
 ### Scenario 2: Setting up Route53 for a domain purchased with another registrar
 
@@ -179,11 +186,11 @@ for some of these instructions.
   this you can also [get the values](ns.md))
 
 ```bash
-ID=$(uuidgen) && aws route53 create-hosted-zone --name subdomain.kubernetes.com --caller-reference $ID | jq .DelegationSet.NameServers
+ID=$(uuidgen) && aws route53 create-hosted-zone --name subdomain.example.com --caller-reference $ID | jq .DelegationSet.NameServers
 ```
 
 * You will now go to your registrars page and log in. You will need to create a
-  new **SUBDOMAIN**, and use the 4 NS records listed above for the new
+  new **SUBDOMAIN**, and use the 4 NS records received from the above command for the new
   **SUBDOMAIN**. This **MUST** be done in order to use your cluster. Do **NOT**
   change your top level NS record, or you might take your site offline.
 

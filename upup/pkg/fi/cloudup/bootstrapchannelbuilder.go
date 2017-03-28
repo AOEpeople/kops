@@ -21,6 +21,7 @@ import (
 
 	channelsapi "k8s.io/kops/channels/pkg/api"
 	"k8s.io/kops/pkg/apis/kops"
+	"k8s.io/kops/pkg/apis/kops/util"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/fitasks"
 	"k8s.io/kops/upup/pkg/fi/utils"
@@ -33,7 +34,11 @@ type BootstrapChannelBuilder struct {
 var _ fi.ModelBuilder = &BootstrapChannelBuilder{}
 
 func (b *BootstrapChannelBuilder) Build(c *fi.ModelBuilderContext) error {
-	addons, manifests := b.buildManifest()
+	addons, manifests, err := b.buildManifest()
+	if err != nil {
+		return err
+	}
+
 	addonsYAML, err := utils.YamlMarshal(addons)
 	if err != nil {
 		return fmt.Errorf("error serializing addons yaml: %v", err)
@@ -61,12 +66,17 @@ func (b *BootstrapChannelBuilder) Build(c *fi.ModelBuilderContext) error {
 	return nil
 }
 
-func (b *BootstrapChannelBuilder) buildManifest() (*channelsapi.Addons, map[string]string) {
+func (b *BootstrapChannelBuilder) buildManifest() (*channelsapi.Addons, map[string]string, error) {
 	manifests := make(map[string]string)
 
 	addons := &channelsapi.Addons{}
 	addons.Kind = "Addons"
 	addons.ObjectMeta.Name = "bootstrap"
+
+	kv, err := util.ParseKubernetesVersion(b.cluster.Spec.KubernetesVersion)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to determine kubernetes version from %q", b.cluster.Spec.KubernetesVersion)
+	}
 
 	{
 		key := "core.addons.k8s.io"
@@ -85,7 +95,14 @@ func (b *BootstrapChannelBuilder) buildManifest() (*channelsapi.Addons, map[stri
 
 	{
 		key := "kube-dns.addons.k8s.io"
-		version := "1.5.1"
+
+		var version string
+		switch {
+		case kv.Major == 1 && kv.Minor <= 5:
+			version = "1.5.1"
+		default:
+			version = "1.6.0"
+		}
 
 		location := key + "/v" + version + ".yaml"
 
@@ -115,7 +132,14 @@ func (b *BootstrapChannelBuilder) buildManifest() (*channelsapi.Addons, map[stri
 
 	{
 		key := "dns-controller.addons.k8s.io"
-		version := "1.5.1"
+
+		var version string
+		switch {
+		case kv.Major == 1 && kv.Minor <= 5:
+			version = "1.5.2"
+		default:
+			version = "1.6.0"
+		}
 
 		location := key + "/v" + version + ".yaml"
 
@@ -175,7 +199,7 @@ func (b *BootstrapChannelBuilder) buildManifest() (*channelsapi.Addons, map[stri
 
 	if b.cluster.Spec.Networking.Weave != nil {
 		key := "networking.weave"
-		version := "1.8.2"
+		version := "1.9.3"
 
 		// TODO: Create configuration object for cni providers (maybe create it but orphan it)?
 		location := key + "/v" + version + ".yaml"
@@ -209,7 +233,7 @@ func (b *BootstrapChannelBuilder) buildManifest() (*channelsapi.Addons, map[stri
 
 	if b.cluster.Spec.Networking.Calico != nil {
 		key := "networking.projectcalico.org"
-		version := "2.0"
+		version := "2.0.2"
 
 		// TODO: Create configuration object for cni providers (maybe create it but orphan it)?
 		location := key + "/v" + version + ".yaml"
@@ -241,5 +265,5 @@ func (b *BootstrapChannelBuilder) buildManifest() (*channelsapi.Addons, map[stri
 		manifests[key] = "addons/" + location
 	}
 
-	return addons, manifests
+	return addons, manifests, nil
 }

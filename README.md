@@ -76,7 +76,7 @@ $ git checkout release
 $ make
 ```
 
-See [building notes](/docs/build.md) for more information.
+See the [install notes](/docs/install.md) for more information.
 
 At this time, Windows is not a supported platform.
 
@@ -85,26 +85,35 @@ At this time, Windows is not a supported platform.
 See the [releases](https://github.com/kubernetes/kops/releases) for more
 information on changes between releases.
 
-## Getting involved!
+## Getting involved and contributing!
 
-Want to contribute to kops? We would love the extra help from the community. We
-have a quickstart guide on [adding a feature](/docs/development/adding_a_feature.md).
+Are you interested in contributing to kops? We the maintainers and community would love your suggestions, contributions, and help! We have a quickstart guide on [adding a feature](/docs/development/adding_a_feature.md) and the maintainers can be contacted at any time to learn more about how to get involved. 
 
-Kops also has time set aside every other week to offer help and guidance to the
-community. Kops maintainers have agreed to set aside time specifically dedicated
-to working with newcomers, helping with PRs, and discussing new features.
+### Maintainers
 
-We recommend letting us know **beforehand** if you plan on attending so we can
-have time to prepare for the call.
+* [@justinsb](https://github.com/justinsb)     
+* [@chrislovecnm](https://github.com/chrislovecnm)
+* [@kris-nova](https://github.com/kris-nova)
+* [@geojaz](https://github.com/geojaz)
+* [@yissachar](https://github.com/yissachar)
 
-| Maintainer   | Schedule      |  URL |
-|--------------|---------------|-------|
-| [@justinsb](https://github.com/justinsb)             |  2nd / 4th Friday 9am PDT | [Zoom](https://zoom.us/my/k8ssigaws) |
-| [@chrislovecnm](https://github.com/chrislovecnm)     |  2nd / 4th Friday 9am PDT | [Zoom](https://zoom.us/my/k8ssigaws) |
-| [@kris-nova](https://github.com/kris-nova)           |  2nd / 4th Friday 9am PDT | [Zoom](https://zoom.us/my/k8ssigaws) |
+## Office Hours
 
-Reach out to us on [kubernetes slack](https://github.com/kubernetes/community#slack-chat).
-A great place to get involved or ask questions is [#sig-cluster-lifecycle](https://kubernetes.slack.com/?redir=%2Fmessages%2Fsig-cluster-lifecycle%2F).
+Kops maintainers also have time (1 hour) set aside every other week to offer help and guidance to the
+community. This is the maintainer's **office hours**. During this time we might work with newcomers, help with PRs, and discuss new features. Anything goes.
+
+We encourage you to reach out **beforehand** if you plan on attending. We have an [agenda](https://docs.google.com/document/d/12QkyL0FkNbWPcLFxxRGSPt_tNPBHbmni3YLY-lHny7E/edit) where we track notes from office hours.
+
+Office hours, on [Zoom](https://zoom.us/my/k8ssigaws) video
+conference are on Fridays at [5pm UTC/9 am US Pacific](http://www.worldtimebuddy.com/?pl=1&lid=100,5,8,12) every other week, on odd week numbers.
+
+You can check your week number using:
+
+```bash
+date +%V
+```
+
+The maintainers and other community members are generally available on the [kubernetes slack](https://github.com/kubernetes/community#slack-chat) in [#kops](https://kubernetes.slack.com/messages/kops/), so come find and chat with us about how kops can be better for you! 
 
 ## Other Resources
 

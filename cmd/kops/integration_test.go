@@ -45,41 +45,64 @@ import (
 
 // TestMinimal runs the test on a minimum configuration, similar to kops create cluster minimal.example.com --zones us-west-1a
 func TestMinimal(t *testing.T) {
-	runTest(t, "minimal.example.com", "../../tests/integration/minimal", "v1alpha0", false)
-	runTest(t, "minimal.example.com", "../../tests/integration/minimal", "v1alpha1", false)
-	runTest(t, "minimal.example.com", "../../tests/integration/minimal", "v1alpha2", false)
+	runTest(t, "minimal.example.com", "../../tests/integration/minimal", "v1alpha0", false, 1)
+	runTest(t, "minimal.example.com", "../../tests/integration/minimal", "v1alpha1", false, 1)
+	runTest(t, "minimal.example.com", "../../tests/integration/minimal", "v1alpha2", false, 1)
+}
+
+// TestHA runs the test on a simple HA configuration, similar to kops create cluster minimal.example.com --zones us-west-1a,us-west-1b,us-west-1c --master-count=3
+func TestHA(t *testing.T) {
+	runTest(t, "ha.example.com", "../../tests/integration/ha", "v1alpha1", false, 3)
+	runTest(t, "ha.example.com", "../../tests/integration/ha", "v1alpha2", false, 3)
+}
+
+// TestComplex runs the test on a more complex configuration, intended to hit more of the edge cases
+func TestComplex(t *testing.T) {
+	runTest(t, "complex.example.com", "../../tests/integration/complex", "v1alpha2", false, 1)
+}
+
+// TestMinimalCloudformation runs the test on a minimum configuration, similar to kops create cluster minimal.example.com --zones us-west-1a
+func TestMinimalCloudformation(t *testing.T) {
+	//runTestCloudformation(t, "minimal.example.com", "../../tests/integration/minimal", "v1alpha0", false)
+	//runTestCloudformation(t, "minimal.example.com", "../../tests/integration/minimal", "v1alpha1", false)
+	runTestCloudformation(t, "minimal.example.com", "../../tests/integration/minimal", "v1alpha2", false)
 }
 
 // TestMinimal_141 runs the test on a configuration from 1.4.1 release
 func TestMinimal_141(t *testing.T) {
-	runTest(t, "minimal-141.example.com", "../../tests/integration/minimal-141", "v1alpha0", false)
+	runTest(t, "minimal-141.example.com", "../../tests/integration/minimal-141", "v1alpha0", false, 1)
 }
 
 // TestPrivateWeave runs the test on a configuration with private topology, weave networking
 func TestPrivateWeave(t *testing.T) {
-	runTest(t, "privateweave.example.com", "../../tests/integration/privateweave", "v1alpha1", true)
-	runTest(t, "privateweave.example.com", "../../tests/integration/privateweave", "v1alpha2", true)
+	runTest(t, "privateweave.example.com", "../../tests/integration/privateweave", "v1alpha1", true, 1)
+	runTest(t, "privateweave.example.com", "../../tests/integration/privateweave", "v1alpha2", true, 1)
 }
 
 // TestPrivateFlannel runs the test on a configuration with private topology, flannel networking
 func TestPrivateFlannel(t *testing.T) {
-	runTest(t, "privateflannel.example.com", "../../tests/integration/privateflannel", "v1alpha1", true)
-	runTest(t, "privateflannel.example.com", "../../tests/integration/privateflannel", "v1alpha2", true)
+	runTest(t, "privateflannel.example.com", "../../tests/integration/privateflannel", "v1alpha1", true, 1)
+	runTest(t, "privateflannel.example.com", "../../tests/integration/privateflannel", "v1alpha2", true, 1)
 }
 
 // TestPrivateCalico runs the test on a configuration with private topology, calico networking
 func TestPrivateCalico(t *testing.T) {
-	runTest(t, "privatecalico.example.com", "../../tests/integration/privatecalico", "v1alpha1", true)
-	runTest(t, "privatecalico.example.com", "../../tests/integration/privatecalico", "v1alpha2", true)
+	runTest(t, "privatecalico.example.com", "../../tests/integration/privatecalico", "v1alpha1", true, 1)
+	runTest(t, "privatecalico.example.com", "../../tests/integration/privatecalico", "v1alpha2", true, 1)
 }
 
 // TestPrivateCanal runs the test on a configuration with private topology, canal networking
 func TestPrivateCanal(t *testing.T) {
-	runTest(t, "privatecanal.example.com", "../../tests/integration/privatecanal", "v1alpha1", true)
-	runTest(t, "privatecanal.example.com", "../../tests/integration/privatecanal", "v1alpha2", true)
+	runTest(t, "privatecanal.example.com", "../../tests/integration/privatecanal", "v1alpha1", true, 1)
+	runTest(t, "privatecanal.example.com", "../../tests/integration/privatecanal", "v1alpha2", true, 1)
 }
 
-func runTest(t *testing.T, clusterName string, srcDir string, version string, private bool) {
+// TestPrivateKopeio runs the test on a configuration with private topology, kopeio networking
+func TestPrivateKopeio(t *testing.T) {
+	runTest(t, "privatekopeio.example.com", "../../tests/integration/privatekopeio", "v1alpha2", true, 1)
+}
+
+func runTest(t *testing.T, clusterName string, srcDir string, version string, private bool, zones int) {
 	var stdout bytes.Buffer
 
 	inputYAML := "in-" + version + ".yaml"
@@ -187,8 +210,13 @@ func runTest(t *testing.T, clusterName string, srcDir string, version string, pr
 			"aws_iam_role_policy_masters." + clusterName + "_policy",
 			"aws_iam_role_policy_nodes." + clusterName + "_policy",
 			"aws_key_pair_kubernetes." + clusterName + "-c4a6ed9aa889b9e2c39cd663eb9c7157_public_key",
-			"aws_launch_configuration_master-us-test-1a.masters." + clusterName + "_user_data",
 			"aws_launch_configuration_nodes." + clusterName + "_user_data",
+		}
+
+		for i := 0; i < zones; i++ {
+			zone := "us-test-1" + string([]byte{byte('a') + byte(i)})
+			s := "aws_launch_configuration_master-" + zone + ".masters." + clusterName + "_user_data"
+			expectedFilenames = append(expectedFilenames, s)
 		}
 
 		if private {
@@ -206,6 +234,97 @@ func runTest(t *testing.T, clusterName string, srcDir string, version string, pr
 		}
 
 		// TODO: any verification of data files?
+	}
+}
+
+func runTestCloudformation(t *testing.T, clusterName string, srcDir string, version string, private bool) {
+	var stdout bytes.Buffer
+
+	inputYAML := "in-" + version + ".yaml"
+	expectedCfPath := "cloudformation.json"
+
+	factoryOptions := &util.FactoryOptions{}
+	factoryOptions.RegistryPath = "memfs://tests"
+
+	h := NewIntegrationTestHarness(t)
+	defer h.Close()
+
+	h.SetupMockAWS()
+
+	factory := util.NewFactory(factoryOptions)
+
+	{
+		options := &CreateOptions{}
+		options.Filenames = []string{path.Join(srcDir, inputYAML)}
+
+		err := RunCreate(factory, &stdout, options)
+		if err != nil {
+			t.Fatalf("error running %q create: %v", inputYAML, err)
+		}
+	}
+
+	{
+		options := &CreateSecretPublickeyOptions{}
+		options.ClusterName = clusterName
+		options.Name = "admin"
+		options.PublicKeyPath = path.Join(srcDir, "id_rsa.pub")
+
+		err := RunCreateSecretPublicKey(factory, &stdout, options)
+		if err != nil {
+			t.Fatalf("error running %q create: %v", inputYAML, err)
+		}
+	}
+
+	{
+		options := &UpdateClusterOptions{}
+		options.InitDefaults()
+		options.Target = "cloudformation"
+		options.OutDir = path.Join(h.TempDir, "out")
+		options.MaxTaskDuration = 30 * time.Second
+
+		// We don't test it here, and it adds a dependency on kubectl
+		options.CreateKubecfg = false
+
+		err := RunUpdateCluster(factory, clusterName, &stdout, options)
+		if err != nil {
+			t.Fatalf("error running update cluster %q: %v", clusterName, err)
+		}
+	}
+
+	// Compare main files
+	{
+		files, err := ioutil.ReadDir(path.Join(h.TempDir, "out"))
+		if err != nil {
+			t.Fatalf("failed to read dir: %v", err)
+		}
+
+		var fileNames []string
+		for _, f := range files {
+			fileNames = append(fileNames, f.Name())
+		}
+		sort.Strings(fileNames)
+
+		actualFilenames := strings.Join(fileNames, ",")
+		expectedFilenames := "kubernetes.json"
+		if actualFilenames != expectedFilenames {
+			t.Fatalf("unexpected files.  actual=%q, expected=%q", actualFilenames, expectedFilenames)
+		}
+
+		actualCF, err := ioutil.ReadFile(path.Join(h.TempDir, "out", "kubernetes.json"))
+		if err != nil {
+			t.Fatalf("unexpected error reading actual cloudformation output: %v", err)
+		}
+		expectedCF, err := ioutil.ReadFile(path.Join(srcDir, expectedCfPath))
+		if err != nil {
+			t.Fatalf("unexpected error reading expected cloudformation output: %v", err)
+		}
+
+		if !bytes.Equal(actualCF, expectedCF) {
+			diffString := diff.FormatDiff(string(expectedCF), string(actualCF))
+			t.Logf("diff:\n%s\n", diffString)
+
+			t.Fatalf("cloudformation output differed from expected")
+		}
 	}
 }
 
@@ -253,9 +372,17 @@ func (h *IntegrationTestHarness) SetupMockAWS() {
 	})
 
 	mockEC2.Images = append(mockEC2.Images, &ec2.Image{
-		ImageId: aws.String("ami-12345678"),
-		Name:    aws.String("k8s-1.4-debian-jessie-amd64-hvm-ebs-2016-10-21"),
-		OwnerId: aws.String(awsup.WellKnownAccountKopeio),
+		ImageId:        aws.String("ami-12345678"),
+		Name:           aws.String("k8s-1.4-debian-jessie-amd64-hvm-ebs-2016-10-21"),
+		OwnerId:        aws.String(awsup.WellKnownAccountKopeio),
+		RootDeviceName: aws.String("/dev/xvda"),
+	})
+
+	mockEC2.Images = append(mockEC2.Images, &ec2.Image{
+		ImageId:        aws.String("ami-15000000"),
+		Name:           aws.String("k8s-1.5-debian-jessie-amd64-hvm-ebs-2017-01-09"),
+		OwnerId:        aws.String(awsup.WellKnownAccountKopeio),
+		RootDeviceName: aws.String("/dev/xvda"),
 	})
 }
 

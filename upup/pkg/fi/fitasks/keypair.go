@@ -41,6 +41,7 @@ type Keypair struct {
 }
 
 var _ fi.HasCheckExisting = &Keypair{}
+var _ fi.HasName = &Keypair{}
 
 // It's important always to check for the existing key, so we don't regenerate keys e.g. on terraform
 func (e *Keypair) CheckExisting(c *fi.Context) bool {
@@ -104,7 +105,7 @@ func (e *Keypair) normalize(c *fi.Context) error {
 
 	for _, task := range e.AlternateNameTasks {
 		if hasAddress, ok := task.(fi.HasAddress); ok {
-			address, err := hasAddress.FindAddress(c)
+			address, err := hasAddress.FindIPAddress(c)
 			if err != nil {
 				return fmt.Errorf("error finding address for %v: %v", task, err)
 			}

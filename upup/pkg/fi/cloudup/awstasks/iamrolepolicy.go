@@ -19,14 +19,16 @@ package awstasks
 import (
 	"fmt"
 
+	"encoding/json"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/golang/glog"
+	"k8s.io/kops/pkg/diff"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
+	"k8s.io/kops/upup/pkg/fi/cloudup/cloudformation"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
-	"k8s.io/kubernetes/pkg/util/diff"
 	"net/url"
 )
 
@@ -94,6 +96,18 @@ func (s *IAMRolePolicy) CheckChanges(a, e, changes *IAMRolePolicy) error {
 	return nil
 }
 
+func (_ *IAMRolePolicy) ShouldCreate(a, e, changes *IAMRolePolicy) (bool, error) {
+	ePolicy, err := e.PolicyDocument.AsString()
+	if err != nil {
+		return false, fmt.Errorf("error rendering PolicyDocument: %v", err)
+	}
+
+	if a == nil && ePolicy == "" {
+		return false, nil
+	}
+	return true, nil
+}
+
 func (_ *IAMRolePolicy) RenderAWS(t *awsup.AWSAPITarget, a, e, changes *IAMRolePolicy) error {
 	policy, err := e.PolicyDocument.AsString()
 	if err != nil {
@@ -140,7 +154,7 @@ func (_ *IAMRolePolicy) RenderAWS(t *awsup.AWSAPITarget, a, e, changes *IAMRoleP
 			if actualPolicy == policy {
 				glog.Warning("Policies were actually the same")
 			} else {
-				d := diff.StringDiff(actualPolicy, policy)
+				d := diff.FormatDiff(actualPolicy, policy)
 				glog.V(2).Infof("diff: %s", d)
 			}
 
@@ -153,6 +167,8 @@ func (_ *IAMRolePolicy) RenderAWS(t *awsup.AWSAPITarget, a, e, changes *IAMRoleP
 		request.PolicyDocument = aws.String(policy)
 		request.RoleName = e.Role.Name
 		request.PolicyName = e.Name
+
+		glog.V(8).Infof("PutRolePolicy RoleName=%s PolicyName=%s: %s", aws.StringValue(e.Role.Name), aws.StringValue(e.Name), policy)
 
 		_, err = t.Cloud.IAM().PutRolePolicy(request)
 		if err != nil {
@@ -198,4 +214,49 @@ func (_ *IAMRolePolicy) RenderTerraform(t *terraform.TerraformTarget, a, e, chan
 
 func (e *IAMRolePolicy) TerraformLink() *terraform.Literal {
 	return terraform.LiteralSelfLink("aws_iam_role_policy", *e.Name)
+}
+
+type cloudformationIAMRolePolicy struct {
+	PolicyName     *string                   `json:"PolicyName"`
+	Roles          []*cloudformation.Literal `json:"Roles"`
+	PolicyDocument map[string]interface{}    `json:"PolicyDocument"`
+}
+
+func (_ *IAMRolePolicy) RenderCloudformation(t *cloudformation.CloudformationTarget, a, e, changes *IAMRolePolicy) error {
+	{
+		policyString, err := e.PolicyDocument.AsString()
+		if err != nil {
+			return fmt.Errorf("error rendering PolicyDocument: %v", err)
+		}
+		if policyString == "" {
+			// A deletion; we simply don't render; cloudformation will observe the removal
+			return nil
+		}
+	}
+
+	tf := &cloudformationIAMRolePolicy{
+		PolicyName: e.Name,
+		Roles:      []*cloudformation.Literal{e.Role.CloudformationLink()},
+	}
+
+	{
+		jsonString, err := e.PolicyDocument.AsBytes()
+		if err != nil {
+			return err
+		}
+
+		data := make(map[string]interface{})
+		err = json.Unmarshal(jsonString, &data)
+		if err != nil {
+			return fmt.Errorf("error parsing PolicyDocument: %v", err)
+		}
+
+		tf.PolicyDocument = data
+	}
+
+	return t.RenderResource("AWS::IAM::Policy", *e.Name, tf)
+}
+
+func (e *IAMRolePolicy) CloudformationLink() *cloudformation.Literal {
+	return cloudformation.Ref("AWS::IAM::Policy", *e.Name)
 }

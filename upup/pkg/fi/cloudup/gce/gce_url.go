@@ -22,20 +22,29 @@ import (
 )
 
 type GoogleCloudURL struct {
+	Version string
 	Project string
 	Type    string
 	Name    string
 	Global  bool
+	Region  string
 	Zone    string
 }
 
 func (u *GoogleCloudURL) BuildURL() string {
-	url := "https://www.googleapis.com/compute/v1/"
+	version := u.Version
+	if version == "" {
+		version = "v1"
+	}
+	url := "https://www.googleapis.com/compute/" + version + "/"
 	if u.Project != "" {
 		url += "projects/" + u.Project + "/"
 	}
 	if u.Global {
 		url += "global/"
+	}
+	if u.Region != "" {
+		url += "regions/" + u.Region + "/"
 	}
 	if u.Zone != "" {
 		url += "zones/" + u.Zone + "/"
@@ -54,11 +63,17 @@ func ParseGoogleCloudURL(u string) (*GoogleCloudURL, error) {
 		return nil, fmt.Errorf("invalid google cloud URL (schema / host): %q", u)
 	}
 
-	if len(tokens) < 5 || tokens[3] != "compute" || tokens[4] != "v1" {
-		return nil, fmt.Errorf("invalid google cloud URL (not compute/v1): %q", u)
+	if len(tokens) < 5 || tokens[3] != "compute" {
+		return nil, fmt.Errorf("invalid google cloud URL (not compute): %q", u)
 	}
 
-	parsed := &GoogleCloudURL{}
+	if tokens[4] != "v1" && tokens[4] != "beta" {
+		return nil, fmt.Errorf("invalid google cloud URL (not compute/v1 or compute/beta): %q", u)
+	}
+
+	parsed := &GoogleCloudURL{
+		Version: tokens[4],
+	}
 	pos := 5
 	for {
 		if pos >= len(tokens) {
@@ -77,6 +92,12 @@ func ParseGoogleCloudURL(u string) (*GoogleCloudURL, error) {
 				return nil, fmt.Errorf("invalid google cloud URL (unexpected zones): %q", u)
 			}
 			parsed.Zone = tokens[pos]
+		} else if t == "regions" && ((pos + 2) < len(tokens)) {
+			pos++
+			if pos >= len(tokens) {
+				return nil, fmt.Errorf("invalid google cloud URL (unexpected regions): %q", u)
+			}
+			parsed.Region = tokens[pos]
 		} else if t == "global" {
 			parsed.Global = true
 		} else {

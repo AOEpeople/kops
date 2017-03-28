@@ -26,6 +26,7 @@ import (
 	"github.com/golang/glog"
 	api "k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/registry"
+	"k8s.io/kops/pkg/apis/kops/util"
 	"k8s.io/kops/pkg/apis/kops/validation"
 	"k8s.io/kops/pkg/model"
 	"k8s.io/kops/pkg/model/components"
@@ -226,8 +227,9 @@ func (c *populateClusterSpec) run() error {
 	if cluster.Spec.DNSZone == "" {
 		dns, err := cloud.DNS()
 		if err != nil {
-			return fmt.Errorf("error getting DNS for cloud: %v", err)
+			return err
 		}
+
 		dnsZone, err := FindDNSHostedZone(dns, cluster.ObjectMeta.Name)
 		if err != nil {
 			return fmt.Errorf("error determining default DNS zone: %v", err)
@@ -235,6 +237,7 @@ func (c *populateClusterSpec) run() error {
 		glog.V(2).Infof("Defaulting DNS zone to: %s", dnsZone)
 		cluster.Spec.DNSZone = dnsZone
 	}
+
 	tags, err := buildCloudupTags(cluster)
 
 	if err != nil {
@@ -254,19 +257,34 @@ func (c *populateClusterSpec) run() error {
 
 	tf.AddTo(templateFunctions)
 
-	optionsContext := &components.OptionsContext{
-		Cluster: cluster,
+	if cluster.Spec.KubernetesVersion == "" {
+		return fmt.Errorf("KubernetesVersion is required")
 	}
+	sv, err := util.ParseKubernetesVersion(cluster.Spec.KubernetesVersion)
+	if err != nil {
+		return fmt.Errorf("unable to determine kubernetes version from %q", cluster.Spec.KubernetesVersion)
+	}
+
+	optionsContext := &components.OptionsContext{
+		ClusterName:       cluster.ObjectMeta.Name,
+		KubernetesVersion: *sv,
+	}
+
 	var fileModels []string
 	var codeModels []loader.OptionsBuilder
 	for _, m := range c.Models {
 		switch m {
 		case "config":
+			// Note: DefaultOptionsBuilder comes first
+			codeModels = append(codeModels, &components.DefaultsOptionsBuilder{Context: optionsContext})
+
 			codeModels = append(codeModels, &components.KubeAPIServerOptionsBuilder{Context: optionsContext})
 			codeModels = append(codeModels, &components.DockerOptionsBuilder{Context: optionsContext})
 			codeModels = append(codeModels, &components.NetworkingOptionsBuilder{Context: optionsContext})
+			codeModels = append(codeModels, &components.KubeDnsOptionsBuilder{Context: optionsContext})
 			codeModels = append(codeModels, &components.KubeletOptionsBuilder{Context: optionsContext})
 			codeModels = append(codeModels, &components.KubeControllerManagerOptionsBuilder{Context: optionsContext})
+			codeModels = append(codeModels, &components.KubeSchedulerOptionsBuilder{OptionsContext: optionsContext})
 			fileModels = append(fileModels, m)
 
 		default:

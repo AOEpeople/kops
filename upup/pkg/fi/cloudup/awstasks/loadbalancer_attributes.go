@@ -38,10 +38,17 @@ func (_ *LoadBalancerAccessLog) GetDependencies(tasks map[string]fi.Task) []fi.T
 }
 
 type terraformLoadBalancerAccessLog struct {
-	EmitInterval   *int64  `json:"internal,omitempty"`
+	EmitInterval   *int64  `json:"interval,omitempty"`
 	Enabled        *bool   `json:"enabled,omitempty"`
 	S3BucketName   *string `json:"bucket,omitempty"`
-	S3BucketPrefix *string `json:"bucekt_prefix,omitempty"`
+	S3BucketPrefix *string `json:"bucket_prefix,omitempty"`
+}
+
+type cloudformationLoadBalancerAccessLog struct {
+	EmitInterval   *int64  `json:"EmitInterval,omitempty"`
+	Enabled        *bool   `json:"Enabled,omitempty"`
+	S3BucketName   *string `json:"S3BucketName,omitempty"`
+	S3BucketPrefix *string `json:"S3BucketPrefix,omitempty"`
 }
 
 //type LoadBalancerAdditionalAttribute struct {
@@ -103,10 +110,10 @@ func (_ *LoadBalancer) modifyLoadBalancerAttributes(t *awsup.AWSAPITarget, a, e,
 		return nil
 	}
 
-	id := fi.StringValue(e.ID)
+	loadBalancerName := fi.StringValue(e.LoadBalancerName)
 
 	request := &elb.ModifyLoadBalancerAttributesInput{}
-	request.LoadBalancerName = e.ID
+	request.LoadBalancerName = e.LoadBalancerName
 	request.LoadBalancerAttributes = &elb.LoadBalancerAttributes{}
 
 	// Setting mandatory attributes to default values if empty
@@ -160,11 +167,11 @@ func (_ *LoadBalancer) modifyLoadBalancerAttributes(t *awsup.AWSAPITarget, a, e,
 		request.LoadBalancerAttributes.ConnectionSettings.IdleTimeout = e.ConnectionSettings.IdleTimeout
 	}
 
-	glog.V(2).Infof("Configuring ELB attributes for ELB %q", id)
+	glog.V(2).Infof("Configuring ELB attributes for ELB %q", loadBalancerName)
 
 	_, err := t.Cloud.ELB().ModifyLoadBalancerAttributes(request)
 	if err != nil {
-		return fmt.Errorf("error configuring ELB attributes for ELB %q: %v", id, err)
+		return fmt.Errorf("error configuring ELB attributes for ELB %q: %v", loadBalancerName, err)
 	}
 
 	return nil

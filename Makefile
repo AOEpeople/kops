@@ -29,7 +29,10 @@ GOVERSION=1.7.4
 MAKEDIR:=$(strip $(shell dirname "$(realpath $(lastword $(MAKEFILE_LIST)))"))
 
 # Keep in sync with upup/models/cloudup/resources/addons/dns-controller/
-DNS_CONTROLLER_TAG=1.5.1
+DNS_CONTROLLER_TAG=1.5.2
+
+KOPS_RELEASE_VERSION=1.5.3
+KOPS_CI_VERSION=1.6.0-alpha.0
 
 GITSHA := $(shell cd ${GOPATH_1ST}/src/k8s.io/kops; git describe --always)
 
@@ -45,12 +48,15 @@ ifndef VERSION
   # We expect that if you are uploading nodeup/protokube, you will set
   # VERSION (along with S3_BUCKET), either directly or by setting CI=1
   ifndef CI
-    VERSION=1.5.1
+    VERSION=${KOPS_RELEASE_VERSION}
   else
-    VERSION := git-${GITSHA}
+    VERSION := ${KOPS_CI_VERSION}+${GITSHA}
   endif
 endif
 
+# + is valid in semver, but not in docker tags. Fixup CI versions.
+# Note that this mirrors the logic in DefaultProtokubeImageName
+PROTOKUBE_TAG := $(subst +,-,${VERSION})
 
 # Go exports:
 
@@ -64,10 +70,10 @@ ifdef STATIC_BUILD
   EXTRA_LDFLAGS=-s
 endif
 
-SHASUMCMD := $(shell sha1sum --help 2> /dev/null)
+SHASUMCMD := $(shell command -v sha1sum || command -v shasum; 2> /dev/null)
 
 ifndef SHASUMCMD
-  $(error "sha1sum command is not available (on MacOS try 'brew install md5sha1sum')")
+  $(error "Neither sha1sum nor shasum command is available")
 endif
 
 kops: kops-gobindata
@@ -99,7 +105,9 @@ codegen: kops-gobindata
 
 test:
 	go test k8s.io/kops/pkg/... -args -v=1 -logtostderr
+	go test k8s.io/kops/nodeup/pkg/... -args -v=1 -logtostderr
 	go test k8s.io/kops/upup/pkg/... -args -v=1 -logtostderr
+	go test k8s.io/kops/nodeup/pkg/... -args -v=1 -logtostderr
 	go test k8s.io/kops/protokube/... -args -v=1 -logtostderr
 	go test k8s.io/kops/dns-controller/pkg/... -args -v=1 -logtostderr
 	go test k8s.io/kops/cmd/... -args -v=1 -logtostderr
@@ -127,14 +135,15 @@ crossbuild-in-docker:
 
 kops-dist: crossbuild-in-docker
 	mkdir -p .build/dist/
-	(sha1sum .build/dist/darwin/amd64/kops | cut -d' ' -f1) > .build/dist/darwin/amd64/kops.sha1
-	(sha1sum .build/dist/linux/amd64/kops | cut -d' ' -f1) > .build/dist/linux/amd64/kops.sha1
+	(${SHASUMCMD} .build/dist/darwin/amd64/kops | cut -d' ' -f1) > .build/dist/darwin/amd64/kops.sha1
+	(${SHASUMCMD} .build/dist/linux/amd64/kops | cut -d' ' -f1) > .build/dist/linux/amd64/kops.sha1
 
-version-dist: nodeup-dist kops-dist protokube-export
+version-dist: nodeup-dist kops-dist protokube-export utils-dist
 	rm -rf .build/upload
 	mkdir -p .build/upload/kops/${VERSION}/linux/amd64/
 	mkdir -p .build/upload/kops/${VERSION}/darwin/amd64/
 	mkdir -p .build/upload/kops/${VERSION}/images/
+	mkdir -p .build/upload/utils/${VERSION}/linux/amd64/
 	cp .build/dist/nodeup .build/upload/kops/${VERSION}/linux/amd64/nodeup
 	cp .build/dist/nodeup.sha1 .build/upload/kops/${VERSION}/linux/amd64/nodeup.sha1
 	cp .build/dist/images/protokube.tar.gz .build/upload/kops/${VERSION}/images/protokube.tar.gz
@@ -143,6 +152,8 @@ version-dist: nodeup-dist kops-dist protokube-export
 	cp .build/dist/linux/amd64/kops.sha1 .build/upload/kops/${VERSION}/linux/amd64/kops.sha1
 	cp .build/dist/darwin/amd64/kops .build/upload/kops/${VERSION}/darwin/amd64/kops
 	cp .build/dist/darwin/amd64/kops.sha1 .build/upload/kops/${VERSION}/darwin/amd64/kops.sha1
+	cp .build/dist/linux/amd64/utils.tar.gz .build/upload/kops/${VERSION}/linux/amd64/utils.tar.gz
+	cp .build/dist/linux/amd64/utils.tar.gz.sha1 .build/upload/kops/${VERSION}/linux/amd64/utils.tar.gz.sha1
 
 upload: kops version-dist
 	aws s3 sync --acl public-read .build/upload/ ${S3_BUCKET}
@@ -152,8 +163,11 @@ gcs-upload: version-dist
 	gsutil -h "Cache-Control:private, max-age=0, no-transform" -m cp -n -r .build/upload/kops/* ${GCS_LOCATION}
 
 # In CI testing, always upload the CI version.
-gcs-publish-ci: VERSION := git-$(shell git describe --always)
+gcs-publish-ci: VERSION := ${KOPS_CI_VERSION}+${GITSHA}
+gcs-publish-ci: PROTOKUBE_TAG := $(subst +,-,${VERSION})
 gcs-publish-ci: gcs-upload
+	echo "VERSION: ${VERSION}"
+	echo "PROTOKUBE_TAG: ${PROTOKUBE_TAG}"
 	echo "${GCS_URL}/${VERSION}" > .build/upload/${LATEST_FILE}
 	gsutil -h "Cache-Control:private, max-age=0, no-transform" cp .build/upload/${LATEST_FILE} ${GCS_LOCATION}
 
@@ -171,7 +185,8 @@ push-aws-dry: push
 	ssh ${TARGET} sudo SKIP_PACKAGE_UPDATE=1 /tmp/nodeup --conf=/var/cache/kubernetes-install/kube_env.yaml --dryrun --v=8
 
 push-gce-run: push
-	ssh ${TARGET} sudo SKIP_PACKAGE_UPDATE=1 /tmp/nodeup --conf=metadata://gce/config --v=8
+	ssh ${TARGET} sudo cp /tmp/nodeup /home/kubernetes/bin/nodeup
+	ssh ${TARGET} sudo SKIP_PACKAGE_UPDATE=1 /home/kubernetes/bin/nodeup --conf=/var/lib/toolbox/kubernetes-install/kube_env.yaml --v=8
 
 # -t is for CentOS http://unix.stackexchange.com/questions/122616/why-do-i-need-a-tty-to-run-sudo-if-i-can-sudo-without-a-password
 push-aws-run: push
@@ -188,18 +203,19 @@ protokube-build-in-docker: protokube-builder-image
 	docker run -t -e VERSION=${VERSION} -v `pwd`:/src protokube-builder /onbuild.sh
 
 protokube-image: protokube-build-in-docker
-	docker build -t protokube:${VERSION} -f images/protokube/Dockerfile .
+	docker build -t protokube:${PROTOKUBE_TAG} -f images/protokube/Dockerfile .
 
 protokube-export: protokube-image
 	mkdir -p .build/dist/images
-	docker save protokube:${VERSION} | gzip -c  > .build/dist/images/protokube.tar.gz
-	(sha1sum .build/dist/images/protokube.tar.gz | cut -d' ' -f1) > .build/dist/images/protokube.tar.gz.sha1
+	docker save protokube:${PROTOKUBE_TAG} > .build/dist/images/protokube.tar
+	gzip --force --best .build/dist/images/protokube.tar
+	(${SHASUMCMD} .build/dist/images/protokube.tar.gz | cut -d' ' -f1) > .build/dist/images/protokube.tar.gz.sha1
 
 # protokube-push is no longer used (we upload a docker image tar file to S3 instead),
 # but we're keeping it around in case it is useful for development etc
 protokube-push: protokube-image
-	docker tag protokube:${VERSION} ${DOCKER_REGISTRY}/protokube:${VERSION}
-	docker push ${DOCKER_REGISTRY}/protokube:${VERSION}
+	docker tag protokube:${PROTOKUBE_TAG} ${DOCKER_REGISTRY}/protokube:${PROTOKUBE_TAG}
+	docker push ${DOCKER_REGISTRY}/protokube:${PROTOKUBE_TAG}
 
 nodeup: nodeup-dist
 
@@ -211,16 +227,16 @@ nodeup-dist:
 	docker run --name=nodeup-build-${UNIQUE} -e STATIC_BUILD=yes -e VERSION=${VERSION} -v ${MAKEDIR}:/go/src/k8s.io/kops golang:${GOVERSION} make -f /go/src/k8s.io/kops/Makefile nodeup-gocode
 	mkdir -p .build/dist
 	docker cp nodeup-build-${UNIQUE}:/go/bin/nodeup .build/dist/
-	(sha1sum .build/dist/nodeup | cut -d' ' -f1) > .build/dist/nodeup.sha1
+	(${SHASUMCMD} .build/dist/nodeup | cut -d' ' -f1) > .build/dist/nodeup.sha1
 
 dns-controller-gocode:
-	go install k8s.io/kops/dns-controller/cmd/dns-controller
+	go install -ldflags "${EXTRA_LDFLAGS} -X main.BuildVersion=${DNS_CONTROLLER_TAG}" k8s.io/kops/dns-controller/cmd/dns-controller
 
 dns-controller-builder-image:
 	docker build -t dns-controller-builder images/dns-controller-builder
 
 dns-controller-build-in-docker: dns-controller-builder-image
-	docker run -t -e VERSION=${VERSION} -v `pwd`:/src dns-controller-builder /onbuild.sh
+	docker run -t -v `pwd`:/src dns-controller-builder /onbuild.sh
 
 dns-controller-image: dns-controller-build-in-docker
 	docker build -t ${DOCKER_REGISTRY}/dns-controller:${DNS_CONTROLLER_TAG}  -f images/dns-controller/Dockerfile .
@@ -229,11 +245,22 @@ dns-controller-push: dns-controller-image
 	docker push ${DOCKER_REGISTRY}/dns-controller:${DNS_CONTROLLER_TAG}
 
 # --------------------------------------------------
+# static utils
+
+utils-dist:
+	docker build -t utils-builder images/utils-builder
+	mkdir -p .build/dist/linux/amd64/
+	docker run -v `pwd`/.build/dist/linux/amd64/:/dist utils-builder /extract.sh
+
+# --------------------------------------------------
 # development targets
 
 # See docs/development/dependencies.md
 copydeps:
 	rsync -avz _vendor/ vendor/ --delete --exclude vendor/  --exclude .git
+	ln -sf kubernetes/staging/src/k8s.io/apimachinery vendor/k8s.io/apimachinery
+	ln -sf kubernetes/staging/src/k8s.io/apiserver vendor/k8s.io/apiserver
+	ln -sf kubernetes/staging/src/k8s.io/client-go vendor/k8s.io/client-go
 
 gofmt:
 	gofmt -w -s channels/
@@ -252,6 +279,11 @@ gofmt:
 	gofmt -w -s dns-controller/cmd
 	gofmt -w -s dns-controller/pkg
 
+goimports:
+	sh -c hack/update-goimports
+
+verify-goimports:
+	sh -c hack/verify-goimports
 
 govet:
 	go vet \

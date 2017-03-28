@@ -18,20 +18,22 @@ package gcetasks
 
 import (
 	"fmt"
-
 	"github.com/golang/glog"
-	"google.golang.org/api/compute/v1"
+	compute "google.golang.org/api/compute/v0.beta"
+	"k8s.io/kops/pkg/diff"
 	"k8s.io/kops/upup/pkg/fi"
 	"k8s.io/kops/upup/pkg/fi/cloudup/gce"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
 	"strings"
 )
 
+// InstanceTemplate represents a GCE InstanceTemplate
 //go:generate fitask -type=InstanceTemplate
 type InstanceTemplate struct {
-	Name        *string
-	Network     *Network
-	Tags        []string
+	Name    *string
+	Network *Network
+	Tags    []string
+	//Labels      map[string]string
 	Preemptible *bool
 
 	BootDiskImage  *string
@@ -43,7 +45,7 @@ type InstanceTemplate struct {
 
 	Scopes []string
 
-	Metadata    map[string]fi.Resource
+	Metadata    map[string]*fi.ResourceHolder
 	MachineType *string
 }
 
@@ -120,9 +122,9 @@ func (e *InstanceTemplate) Find(c *fi.Context) (*InstanceTemplate, error) {
 	//}
 
 	if p.Metadata != nil {
-		actual.Metadata = make(map[string]fi.Resource)
+		actual.Metadata = make(map[string]*fi.ResourceHolder)
 		for _, meta := range p.Metadata.Items {
-			actual.Metadata[meta.Key] = fi.NewStringResource(*meta.Value)
+			actual.Metadata[meta.Key] = fi.WrapResource(fi.NewStringResource(meta.Value))
 		}
 	}
 
@@ -134,6 +136,12 @@ func (e *InstanceTemplate) Run(c *fi.Context) error {
 }
 
 func (_ *InstanceTemplate) CheckChanges(a, e, changes *InstanceTemplate) error {
+	if fi.StringValue(e.BootDiskImage) == "" {
+		return fi.RequiredField("BootDiskImage")
+	}
+	if fi.StringValue(e.MachineType) == "" {
+		return fi.RequiredField("MachineType")
+	}
 	return nil
 }
 
@@ -197,7 +205,7 @@ func (e *InstanceTemplate) mapToGCE(project string) (*compute.InstanceTemplate, 
 	if e.Scopes != nil {
 		var scopes []string
 		for _, s := range e.Scopes {
-			s = expandScopeAlias(s)
+			s = scopeToLongForm(s)
 
 			scopes = append(scopes, s)
 		}
@@ -209,13 +217,13 @@ func (e *InstanceTemplate) mapToGCE(project string) (*compute.InstanceTemplate, 
 
 	var metadataItems []*compute.MetadataItems
 	for key, r := range e.Metadata {
-		v, err := fi.ResourceAsString(r)
+		v, err := r.AsString()
 		if err != nil {
 			return nil, fmt.Errorf("error rendering InstanceTemplate metadata %q: %v", key, err)
 		}
 		metadataItems = append(metadataItems, &compute.MetadataItems{
 			Key:   key,
-			Value: fi.String(v),
+			Value: v,
 		})
 	}
 
@@ -245,6 +253,10 @@ func (e *InstanceTemplate) mapToGCE(project string) (*compute.InstanceTemplate, 
 	return i, nil
 }
 
+func (e *InstanceTemplate) URL(project string) string {
+	return fmt.Sprintf("https://www.googleapis.com/compute/v1/projects/%s/global/instanceTemplates/%s", project, fi.StringValue(e.Name))
+}
+
 func (_ *InstanceTemplate) RenderGCE(t *gce.GCEAPITarget, a, e, changes *InstanceTemplate) error {
 	project := t.Cloud.Project
 
@@ -254,14 +266,49 @@ func (_ *InstanceTemplate) RenderGCE(t *gce.GCEAPITarget, a, e, changes *Instanc
 	}
 
 	if a == nil {
-		_, err := t.Cloud.Compute.InstanceTemplates.Insert(t.Cloud.Project, i).Do()
+		glog.V(4).Infof("Creating InstanceTemplate %v", i)
+
+		op, err := t.Cloud.Compute.InstanceTemplates.Insert(t.Cloud.Project, i).Do()
 		if err != nil {
+			return fmt.Errorf("error creating InstanceTemplate: %v", err)
+		}
+
+		if err := t.Cloud.WaitForOp(op); err != nil {
 			return fmt.Errorf("error creating InstanceTemplate: %v", err)
 		}
 	} else {
 		// TODO: Make error again
-		glog.Errorf("Cannot apply changes to InstanceTemplate: %v", changes)
+		if changes.Metadata != nil {
+			for k, ev := range e.Metadata {
+				av := a.Metadata[k]
+				if av == nil {
+					glog.Infof("Metadata %q not found", k)
+					continue
+				}
+
+				evString, err := ev.AsString()
+				if err != nil {
+					glog.Infof("Expected.Metadata.%s could not be rendered: %v", k, err)
+					continue
+				}
+				avString, err := av.AsString()
+				if err != nil {
+					glog.Infof("Actual.Metadata.%s could not be rendered: %v", k, err)
+					continue
+				}
+
+				if evString == avString {
+					continue
+				}
+
+				glog.Infof("Difference in Metadata.%s:", k)
+				glog.Infof("%s", diff.FormatDiff(avString, evString))
+			}
+		}
+
+		// TODO: Make error again
 		//return fmt.Errorf("Cannot apply changes to InstanceTemplate: %v", changes)
+		glog.Warningf("Cannot apply changes to InstanceTemplate: %v", changes)
 	}
 
 	return nil
@@ -361,7 +408,7 @@ func (t *terraformInstanceTemplate) AddMetadata(metadata *compute.Metadata) {
 			t.Metadata = make(map[string]string)
 		}
 		for _, g := range metadata.Items {
-			value := *g.Value
+			value := g.Value
 			tfValue := strings.Replace(value, "${", "$${", -1)
 			t.Metadata[g.Key] = tfValue
 		}

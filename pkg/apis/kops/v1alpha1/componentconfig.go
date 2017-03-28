@@ -16,10 +16,17 @@ limitations under the License.
 
 package v1alpha1
 
-import metav1 "k8s.io/kubernetes/pkg/apis/meta/v1"
+import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 type KubeletConfigSpec struct {
+	// not used for clusters version 1.6 and later
 	APIServers string `json:"apiServers,omitempty" flag:"api-servers"`
+
+	// kubeconfigPath is the path to the kubeconfig file with authorization
+	// information and API server location
+	// kops will only use this for clusters version 1.6 and later
+	KubeconfigPath    string `json:"kubeconfigPath,omitempty" flag:"kubeconfig"`
+	RequireKubeconfig *bool  `json:"requireKubeconfig,omitempty" flag:"require-kubeconfig"`
 
 	LogLevel *int32 `json:"logLevel,omitempty" flag:"v"`
 
@@ -166,8 +173,6 @@ type KubeletConfigSpec struct {
 	//VolumePluginDir string `json:"volumePluginDir"`
 	// cloudProvider is the provider for cloud services.
 	CloudProvider string `json:"cloudProvider,omitempty" flag:"cloud-provider"`
-	//// cloudConfigFile is the path to the cloud provider configuration file.
-	//CloudConfigFile string `json:"cloudConfigFile,omitempty"`
 	// KubeletCgroups is the absolute name of cgroups to isolate the kubelet in.
 	KubeletCgroups string `json:"kubeletCgroups,omitempty" flag:"kubelet-cgroups"`
 	// Cgroups that container runtime is expected to be isolated in.
@@ -265,8 +270,10 @@ type KubeletConfigSpec struct {
 	//// nodeIP is IP address of the node. If set, kubelet will use this IP
 	//// address for the node.
 	//NodeIP string `json:"nodeIP,omitempty"`
+
 	// nodeLabels to add when registering the node in the cluster.
 	NodeLabels map[string]string `json:"nodeLabels,omitempty" flag:"node-labels"`
+
 	// nonMasqueradeCIDR configures masquerading: traffic to IPs outside this range will use IP masquerade.
 	NonMasqueradeCIDR string `json:"nonMasqueradeCIDR,omitempty" flag:"non-masquerade-cidr"`
 
@@ -283,7 +290,7 @@ type KubeletConfigSpec struct {
 	// networkPluginMTU is the MTU to be passed to the network plugin,
 	// and overrides the default MTU for cases where it cannot be automatically
 	// computed (such as IPSEC).
-	NetworkPluginMTU *int32 `json:"networkPluginMTU,omitEmpty" flag:"network-plugin-mtu"`
+	NetworkPluginMTU *int32 `json:"networkPluginMTU,omitempty" flag:"network-plugin-mtu"`
 
 	// imageGCHighThresholdPercent is the percent of disk usage after which
 	// image garbage collection is always run.
@@ -293,11 +300,6 @@ type KubeletConfigSpec struct {
 	// collect to.
 	ImageGCLowThresholdPercent *int32 `json:"imageGCLowThresholdPercent,omitempty" flag:"image-gc-low-threshold"`
 
-	// terminatedPodGCThreshold is the number of terminated pods that can exist
-	// before the terminated pod garbage collector starts deleting terminated pods.
-	// If <= 0, the terminated pod garbage collector is disabled.
-	TerminatedPodGCThreshold *int32 `json:"terminatedPodGCThreshold,omitempty" flag:"terminated-pod-gc-threshold"`
-
 	// Comma-delimited list of hard eviction expressions.  For example, 'memory.available<300Mi'.
 	EvictionHard *string `json:"evictionHard,omitempty" flag:"eviction-hard"`
 	// Comma-delimited list of soft eviction expressions.  For example, 'memory.available<300Mi'.
@@ -305,7 +307,7 @@ type KubeletConfigSpec struct {
 	// Comma-delimited list of grace periods for each soft eviction signal.  For example, 'memory.available=30s'.
 	EvictionSoftGracePeriod string `json:"evictionSoftGracePeriod,omitempty" flag:"eviction-soft-grace-period"`
 	// Duration for which the kubelet has to wait before transitioning out of an eviction pressure condition.
-	EvictionPressureTransitionPeriod metav1.Duration `json:"evictionPressureTransitionPeriod,omitempty" flag:"eviction-pressure-transition-period"`
+	EvictionPressureTransitionPeriod *metav1.Duration `json:"evictionPressureTransitionPeriod,omitempty" flag:"eviction-pressure-transition-period"`
 	// Maximum allowed grace period (in seconds) to use when terminating pods in response to a soft eviction threshold being met.
 	EvictionMaxPodGracePeriod int32 `json:"evictionMaxPodGracePeriod,omitempty" flag:"eviction-max-pod-grace-period"`
 	// Comma-delimited list of minimum reclaims (e.g. imagefs.available=2Gi) that describes the minimum amount of resource the kubelet will reclaim when performing a pod eviction if that resource is under pressure.
@@ -313,6 +315,9 @@ type KubeletConfigSpec struct {
 
 	// The full path of the directory in which to search for additional third party volume plugins
 	VolumePluginDirectory string `json:"volumePluginDirectory,omitempty" flag:"volume-plugin-dir"`
+
+	// Taints to add when registering a node in the cluster
+	Taints []string `json:"taints,omitempty" flag:"register-with-taints"`
 }
 
 type KubeProxyConfig struct {
@@ -416,6 +421,20 @@ type KubeAPIServerConfig struct {
 	// otherwise the host's root CA set will be used.
 	OIDCCAFile *string `json:"oidcCAFile,omitempty" flag:"oidc-ca-file"`
 
+	// If set, all requests coming to the apiserver will be logged to this file.
+	AuditLogPath *string `json:"auditLogPath,omitempty" flag:"audit-log-path"`
+	// The maximum number of days to retain old audit log files based on the timestamp encoded in their filename.
+	AuditLogMaxAge *int32 `json:"auditLogMaxAge,omitempty" flag:"audit-log-maxage"`
+	// The maximum number of old audit log files to retain.
+	AuditLogMaxBackups *int32 `json:"auditLogMaxBackups,omitempty" flag:"audit-log-maxbackup"`
+	// The maximum size in megabytes of the audit log file before it gets rotated. Defaults to 100MB.
+	AuditLogMaxSize *int32 `json:"auditLogMaxSize,omitempty" flag:"audit-log-maxsize"`
+
+	// File with webhook configuration for token authentication in kubeconfig format. The API server will query the remote service to determine authentication for bearer tokens.
+	AuthenticationTokenWebhookConfigFile *string `json:"authenticationTokenWebhookConfigFile,omitempty" flag:"authentication-token-webhook-config-file"`
+	// The duration to cache responses from the webhook token authenticator. Default is 2m. (default 2m0s)
+	AuthenticationTokenWebhookCacheTtl *metav1.Duration `json:"authenticationTokenWebhookCacheTtl,omitempty" flag:"authentication-token-webhook-cache-ttl"`
+
 	AuthorizationMode          *string `json:"authorizationMode,omitempty" flag:"authorization-mode"`
 	AuthorizationRBACSuperUser *string `json:"authorizationRbacSuperUser,omitempty" flag:"authorization-rbac-super-user"`
 }
@@ -438,8 +457,6 @@ type KubeControllerManagerConfig struct {
 	//Address string `json:"address"`
 	// cloudProvider is the provider for cloud services.
 	CloudProvider string `json:"cloudProvider,omitempty" flag:"cloud-provider"`
-	//// cloudConfigFile is the path to the cloud provider configuration file.
-	//CloudConfigFile string `json:"cloudConfigFile"`
 	//// concurrentEndpointSyncs is the number of endpoint syncing operations
 	//// that will be done concurrently. Larger number = faster endpoint updating,
 	//// but more CPU (and network) load.
@@ -513,7 +530,7 @@ type KubeControllerManagerConfig struct {
 	//// case of node failure. For more details look into RateLimiter.
 	//DeletingPodsBurst int32 `json:"deletingPodsBurst"`
 	//// nodeMontiorGracePeriod is the amount of time which we allow a running node to be
-	//// unresponsive before marking it unhealty. Must be N times more than kubelet's
+	//// unresponsive before marking it unhealthy. Must be N times more than kubelet's
 	//// nodeStatusUpdateFrequency, where N means number of retries allowed for kubelet
 	//// to post node status.
 	//NodeMonitorGracePeriod unversioned.Duration `json:"nodeMonitorGracePeriod"`
@@ -521,7 +538,7 @@ type KubeControllerManagerConfig struct {
 	//// Retry interval equals node-sync-period.
 	//RegisterRetryCount int32 `json:"registerRetryCount"`
 	//// nodeStartupGracePeriod is the amount of time which we allow starting a node to
-	//// be unresponsive before marking it unhealty.
+	//// be unresponsive before marking it unhealthy.
 	//NodeStartupGracePeriod unversioned.Duration `json:"nodeStartupGracePeriod"`
 	//// nodeMonitorPeriod is the period for syncing NodeStatus in NodeController.
 	//NodeMonitorPeriod unversioned.Duration `json:"nodeMonitorPeriod"`
@@ -567,6 +584,11 @@ type KubeControllerManagerConfig struct {
 	// ReconcilerSyncLoopPeriod is the amount of time the reconciler sync states loop
 	// wait between successive executions. Is set to 1 min by kops by default
 	AttachDetachReconcileSyncPeriod *metav1.Duration `json:"attachDetachReconcileSyncPeriod,omitempty" flag:"attach-detach-reconcile-sync-period"`
+
+	// terminatedPodGCThreshold is the number of terminated pods that can exist
+	// before the terminated pod garbage collector starts deleting terminated pods.
+	// If <= 0, the terminated pod garbage collector is disabled.
+	TerminatedPodGCThreshold *int32 `json:"terminatedPodGCThreshold,omitempty" flag:"terminated-pod-gc-threshold"`
 }
 
 type KubeSchedulerConfig struct {
@@ -630,4 +652,11 @@ type LeaderElectionConfiguration struct {
 	//// acquisition and renewal of a leadership. This is only applicable if
 	//// leader election is enabled.
 	//RetryPeriod unversioned.Duration `json:"retryPeriod"`
+}
+
+type CloudConfiguration struct {
+	// GCE cloud-config options
+	Multizone          *bool   `json:"multizone,omitempty"`
+	NodeTags           *string `json:"nodeTags,omitempty"`
+	NodeInstancePrefix *string `json:"nodeInstancePrefix,omitempty"`
 }

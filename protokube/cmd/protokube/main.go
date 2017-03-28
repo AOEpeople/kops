@@ -61,8 +61,14 @@ func run() error {
 	master := false
 	flag.BoolVar(&master, "master", master, "Act as master")
 
+	applyTaints := false
+	flag.BoolVar(&applyTaints, "apply-taints", applyTaints, "Apply taints to nodes based on the role")
+
 	containerized := false
 	flag.BoolVar(&containerized, "containerized", containerized, "Set if we are running containerized.")
+
+	cloud := "aws"
+	flag.StringVar(&cloud, "cloud", cloud, "CloudProvider we are using (aws,gce)")
 
 	dnsInternalSuffix := ""
 	flag.StringVar(&dnsInternalSuffix, "dns-internal-suffix", dnsInternalSuffix, "DNS suffix for internal domain names")
@@ -82,18 +88,57 @@ func run() error {
 
 	flags.Parse(os.Args)
 
-	volumes, err := protokube.NewAWSVolumes()
-	if err != nil {
-		return fmt.Errorf("Error initializing AWS: %q", err)
+	var volumes protokube.Volumes
+	var internalIP net.IP
+
+	if cloud == "aws" {
+		awsVolumes, err := protokube.NewAWSVolumes()
+		if err != nil {
+			glog.Errorf("Error initializing AWS: %q", err)
+			os.Exit(1)
+		}
+		volumes = awsVolumes
+
+		if clusterID == "" {
+			clusterID = awsVolumes.ClusterID()
+		}
+		if internalIP == nil {
+			internalIP = awsVolumes.InternalIP()
+		}
+	} else if cloud == "gce" {
+		gceVolumes, err := protokube.NewGCEVolumes()
+		if err != nil {
+			glog.Errorf("Error initializing GCE: %q", err)
+			os.Exit(1)
+		}
+
+		volumes = gceVolumes
+
+		//gceProject = gceVolumes.Project()
+
+		if clusterID == "" {
+			clusterID = gceVolumes.ClusterID()
+		}
+
+		if internalIP == nil {
+			internalIP = gceVolumes.InternalIP()
+		}
+	} else {
+		glog.Errorf("Unknown cloud %q", cloud)
+		os.Exit(1)
 	}
 
 	if clusterID == "" {
-		clusterID = volumes.ClusterID()
 		if clusterID == "" {
 			return fmt.Errorf("cluster-id is required (cannot be determined from cloud)")
 		} else {
 			glog.Infof("Setting cluster-id from cloud: %s", clusterID)
 		}
+	}
+
+	if internalIP == nil {
+		glog.Errorf("Cannot determine internal IP")
+		os.Exit(1)
 	}
 
 	if dnsInternalSuffix == "" {
@@ -114,7 +159,6 @@ func run() error {
 	//	glog.Errorf("Error finding internal IP: %q", err)
 	//	os.Exit(1)
 	//}
-	internalIP := volumes.InternalIP()
 
 	var dnsScope dns.Scope
 	var dnsController *dns.DNSController
@@ -162,6 +206,7 @@ func run() error {
 
 	k := &protokube.KubeBoot{
 		Master:            master,
+		ApplyTaints:       applyTaints,
 		InternalDNSSuffix: dnsInternalSuffix,
 		InternalIP:        internalIP,
 		//MasterID          : fromVolume
